@@ -1,0 +1,11 @@
+hydra:
+  job:
+    chdir: true
+model_id: stabilityai/stable-diffusion-2-1-base
+image: static/textual_inversion/example_01.png
+device: "auto"
+training:
+  lr: 0.1
+  steps: 200
+  batch_size: 2
+  save_steps: 10
