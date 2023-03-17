@@ -1,0 +1,7 @@
+model_id: "stabilityai/stable-diffusion-2-1-base"
+prompt: "a photo of an astronaut riding a horse on mars"
+neg_prompt: ""
+cfg_scale: 7
+steps: 20
+seed: null
+device: "auto"

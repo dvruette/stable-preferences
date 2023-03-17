@@ -1,0 +1,20 @@
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stable-preferences"
+description = "Stable Preferences"
+authors = [
+    { name = "Elisabetta Fedele" },
+    { name = "Lukas Wolf" },
+    { name = "Jonathan Thomm" },
+    { name = "Dimitri von Rütte" }
+]
+readme = "README.md"
+urls = {github = "https://github.com/dvruette/stable-preferences"}
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "stable_preferences.__version__"}

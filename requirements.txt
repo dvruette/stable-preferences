@@ -1,0 +1,12 @@
+diffusers
+torch
+numpy
+pandas
+matplotlib
+pillow
+torchvision
+accelerate
+xformers
+transformers
+hydra-core
+omegaconf
