@@ -16,5 +16,8 @@ readme = "README.md"
 urls = {github = "https://github.com/dvruette/stable-preferences"}
 dynamic = ["version"]
 
+[tool.setuptools]
+packages = ["stable_preferences"]
+
 [tool.setuptools.dynamic]
 version = {attr = "stable_preferences.__version__"}
