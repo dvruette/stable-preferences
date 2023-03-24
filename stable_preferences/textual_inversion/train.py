@@ -1,35 +1,16 @@
-from typing import List
-
 import torch
 import torch.nn.functional as F
 import tqdm
 import hydra
-import torchvision.transforms as T
-from hydra.utils import to_absolute_path
-from PIL import Image
 from omegaconf import DictConfig
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import DDPMScheduler, AutoencoderKL, UNet2DConditionModel
 
+from stable_preferences.data import load_images
+
 
 dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 torch.set_default_dtype(dtype)
-
-
-def load_images(input_paths: List[str]):
-    # load images to tensor with torchvision
-    transform = T.Compose([
-        T.Resize(512),
-        T.ToTensor(),
-    ])
-
-    imgs = []
-    for path in input_paths:
-        img = Image.open(to_absolute_path(path)).convert("RGB")
-        img = 2*transform(img) - 1
-        imgs.append(img)
-    imgs = torch.stack(imgs)
-    return imgs
 
 
 @hydra.main(config_path="../configs", config_name="textual_inversion", version_base=None)

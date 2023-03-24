@@ -1,0 +1,9 @@
+
+training:
+  learning_rate: 3e-3
+  batch_size: 8
+  max_steps: 1000
+  warmup_steps: 60
+model:
+  pretrained_name: stabilityai/stable-diffusion-2-1-base
+  target_modules: CrossAttention, FeedForward]
