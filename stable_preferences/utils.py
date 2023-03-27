@@ -59,18 +59,18 @@ def generate_trajectory_with_binary_feedback(
         iterator = tqdm.tqdm(scheduler.timesteps)
 
     traj = []
-    for _, t in enumerate(iterator):
+    norms = []
+    for iteration, t in enumerate(iterator):
         z = scheduler.scale_model_input(z, t)
         zs = torch.cat((2+len(liked_prompts)+len(disliked_prompts))*[z], dim=0)
-        # print(zs.shape)
-        # print(prompt_embd.shape)
+
         assert(zs.shape==(batch_size*(2+len(liked_prompts)+len(disliked_prompts)),4,64,64))
         unet_out = unet(zs, t, prompt_embd) # layout: pos promt in all samples, neg prompt in all samples, first liked prompt in all samples, second liked prompt in all samples, etc.
         noise_cond, noise_uncond, noise_liked, noise_disliked = torch.tensor_split(unet_out.sample,[batch_size,2*batch_size,(2+len(liked_prompts))*batch_size])
 
         # aggregate the noise from the liked and disliked prompts per sample and obtain one mean vector per sample
-        mean_noise_liked = torch.stack(noise_liked.split(batch_size)).mean(axis=0, dtype=torch.float)
-        mean_noise_disliked = torch.stack(noise_disliked.split(batch_size)).mean(axis=0, dtype=torch.float)
+        mean_noise_liked = torch.stack(noise_liked.split(batch_size)).mean(axis=0)
+        mean_noise_disliked = torch.stack(noise_disliked.split(batch_size)).mean(axis=0)
         # print("mean noise liked: ",mean_noise_liked.shape)
         
         # cfg_vector = (noise_cond-noise_uncond)
@@ -82,14 +82,25 @@ def generate_trajectory_with_binary_feedback(
         #     cfg_vector += (noise_cond-mean_noise_disliked)   
         #     cfg_noramlizer += 1
         # noise_pred = noise_uncond + cfg_scale * cfg_vector/cfg_noramlizer
-        alpha = 0.25
-        noise_pred = noise_cond + (alpha*(noise_liked-noise_disliked) + (1-alpha)*(noise_cond-noise_uncond))*cfg_scale
-        # print("noise pred: ",noise_pred.shape)
+        alpha = 0.6
+        if t<=5000: # i think stepps range from 1000 (first) to 0 (last)
+            # I observed that the norm of the preference vector becomes very large, so I normalize it to the norm of the cfg vector
+            # making the norm equal for both results in very high norms, because the noise_cond is "not happy", therefore it helps allowing the 
+            # preference vector, if happy not to scale up to make the cond unhappy. 
+            preference_vector = (mean_noise_liked-mean_noise_disliked)
+            preference_vector = preference_vector / preference_vector.norm() * min((noise_cond-noise_uncond).norm(),preference_vector.norm())
+            # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg 
+            noise_pred = noise_cond + (alpha*preference_vector + (1-alpha)*(noise_cond-noise_uncond))*cfg_scale
+            norms.append((preference_vector.norm().item(), (noise_cond-noise_uncond).norm().item()))
+        else:
+            # standard cfg
+            noise_pred = noise_cond + (noise_cond-noise_uncond)*cfg_scale
 
         z = scheduler.step(noise_pred, t, z).prev_sample
         if not only_last or t == scheduler.timesteps[-1]:
             y = pipe.decode_latents(z)
             traj.append(pipe.numpy_to_pil(y))
+    print("norms", norms)
     return traj
     
 

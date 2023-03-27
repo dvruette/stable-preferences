@@ -2,6 +2,8 @@ import torch
 import hydra
 from omegaconf import DictConfig
 from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler
+import os
+import numpy as np
 
 from stable_preferences.utils import generate_trajectory, generate_trajectory_with_binary_feedback
 
@@ -10,12 +12,17 @@ MODE = "binary_feedback"
 dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 torch.set_default_dtype(dtype)
 
+def get_free_gpu():
+    os.system('nvidia-smi -q -d Memory |grep -A4 GPU|grep Free >tmp')
+    memory_available = [int(x.split()[2]) for x in open('tmp', 'r').readlines()]
+    return np.argmax(memory_available)
+
 
 @hydra.main(config_path="configs", config_name="example_binary_feedback", version_base=None)
 def main(ctx: DictConfig):
     if ctx.device == "auto":
         device = "mps" if torch.backends.mps.is_available() else "cpu"
-        device = "cuda" if torch.cuda.is_available() else device
+        device = get_free_gpu() #"cuda" if torch.cuda.is_available() else device
     else:
         device = ctx.device
     print(f"Using device: {device}")
@@ -52,8 +59,13 @@ def main(ctx: DictConfig):
             device=device,
         )
     img = traj[-1][-1]
-    img.save("example.png")
-    img.show()
+    n_files = len([name for name in os.listdir('./outputs/example_images')])
+    print(n_files)
+    img.save(f"./outputs/example_images/example{n_files}.png")
+    try:
+        img.show()
+    except:
+        pass
 
 
 if __name__ == "__main__":

@@ -4,3 +4,5 @@ __pycache__
 example.png
 outputs
 .DS_Store
+jtenv
+tmp*
