@@ -38,6 +38,7 @@ def main(ctx: DictConfig):
     )
     img = traj[-1][-1]
     img.save("example.png")
+    img.show()
 
 
 if __name__ == "__main__":
