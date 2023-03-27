@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tqdm
 
+
 def display_images(images, n_cols=4, size=4):
     n_rows = int(np.ceil(len(images) / n_cols))
     fig = plt.figure(figsize=(size * n_cols, size * n_rows))
