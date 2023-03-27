@@ -1,0 +1,9 @@
+model_id: "stabilityai/stable-diffusion-2-1-base"
+prompt: "a pet"
+neg_prompt: ""
+liked_prompts: []
+disliked_prompts: []
+cfg_scale: 7
+steps: 20
+seed: 42
+device: "auto"
