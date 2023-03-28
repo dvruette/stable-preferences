@@ -13,6 +13,7 @@ from omegaconf import DictConfig
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import DDPMScheduler, AutoencoderKL, UNet2DConditionModel
 from diffusers.utils.import_utils import is_xformers_available
+from accelerate import Accelerator
 
 imagenet_templates_small = [
     "a photo of a {}",
@@ -179,18 +180,24 @@ def main(ctx: DictConfig):
         device = "cuda" if torch.cuda.is_available() else device
     else:
         device = ctx.device
-        
     print(f"Using device: {device}")
+        
+    dtype = "fp16" if torch.cuda.is_available() else "no"
+    weight_dtype = torch.float16 if dtype == "fp16" else torch.float32
     
-    
-    torch.cuda.empty_cache()
-    
-    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-    #dtype = torch.float32
-    torch.set_default_dtype(dtype)
-
     tokenizer = CLIPTokenizer.from_pretrained(ctx.model_id, subfolder="tokenizer")
-    noise_scheduler = DDPMScheduler.from_pretrained(ctx.model_id, subfolder="scheduler")
+    num_added_tokens = tokenizer.add_tokens(ctx.placeholder_token)
+    if num_added_tokens == 0:
+        raise ValueError(
+            f"The tokenizer already contains the token {ctx.placeholder_token}. Please pass a different"
+            " `placeholder_token` that is not already in the tokenizer."
+        )
+        
+    # Get the token ids of both the init token and the placeholder token
+    initializer_token_id = tokenizer.encode(ctx.initializer_token, add_special_tokens=False)[0]
+    place_holder_token_id = tokenizer.convert_tokens_to_ids(ctx.placeholder_token)
+    
+    # Load stable diffusion model
     text_encoder = CLIPTextModel.from_pretrained(ctx.model_id, subfolder="text_encoder")
     vae = AutoencoderKL.from_pretrained(ctx.model_id, subfolder="vae")
     unet = UNet2DConditionModel.from_pretrained(ctx.model_id, subfolder="unet")
@@ -199,15 +206,7 @@ def main(ctx: DictConfig):
         import xformers
         unet.enable_xformers_memory_efficient_attention()
     
-    text_encoder.to(device, dtype = dtype)
-    vae.to(device, dtype = dtype)   
-    unet.to(device, dtype = dtype)
-    
-    # Get the token ids of both the init token and the placeholder token
-    initializer_token_id = tokenizer.encode(ctx.initializer_token, add_special_tokens=False)[0]
-    place_holder_token_id = tokenizer.convert_tokens_to_ids(ctx.placeholder_token)
-    
-    # Resize token embeddings
+    # Resize token embeddings since we have added a token
     text_encoder.resize_token_embeddings(len(tokenizer))
     
     # Initialize the newly added placeholder token with the embeddings of the initializer token which will be optimized later
@@ -223,17 +222,6 @@ def main(ctx: DictConfig):
     text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
     #text_encoder.requires_grad_(False) Dimitri's work 
 
-    embedding = torch.randn(1, 1, text_encoder.config.hidden_size, device=device, requires_grad=True)
-
-    # Initilize the optimizer
-    optimizer = torch.optim.AdamW(
-        text_encoder.get_input_embeddings().parameters(),  # only optimize the embeddings
-        lr=ctx.training.lr,
-        betas=(ctx.training.adam_beta1, ctx.training.adam_beta2),
-        weight_decay=ctx.training.adam_weight_decay,
-        eps=ctx.training.adam_epsilon,
-    )
-    
     # Dataset and DataLoaders creation
     train_dataset = TextualInversionDataset(
         data_root=ctx.train_data_dir,
@@ -248,17 +236,50 @@ def main(ctx: DictConfig):
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset, batch_size=ctx.training.batch_size, shuffle=True, num_workers=ctx.training.dataloader_num_workers
     )
+    
+    noise_scheduler = DDPMScheduler.from_pretrained(ctx.model_id, subfolder="scheduler")
+    
+    # embedding = torch.randn(1, 1, text_encoder.config.hidden_size, device=device, requires_grad=True)
+
+    # Initilize the optimizer
+    optimizer = torch.optim.AdamW(
+        text_encoder.get_input_embeddings().parameters(),  # only optimize the embeddings
+        lr=ctx.training.lr,
+        betas=(ctx.training.adam_beta1, ctx.training.adam_beta2),
+        weight_decay=ctx.training.adam_weight_decay,
+        eps=ctx.training.adam_epsilon,
+    )
+    
+    accelerator = Accelerator(
+        gradient_accumulation_steps=ctx.training.gradient_accumulation_steps,
+        mixed_precision=dtype
+    )
+    
+    text_encoder, optimizer, train_dataloader = accelerator.prepare(
+        text_encoder, optimizer, train_dataloader
+    )
+    
+    # Move vae and unet to device
+    vae.to(accelerator.device, dtype=weight_dtype)
+    unet.to(accelerator.device, dtype=weight_dtype)
+
+    # Keep vae in eval mode as we don't train it
+    vae.eval()
+    # Keep unet in train mode to enable gradient checkpointing
+    unet.train()
+    
 
     prog_bar = tqdm.trange(ctx.training.steps)
-    
-    print(os.system("nvidia-smi"))
-    
+    prog_bar.set_description("Steps")
+        
     for i in range(ctx.training.steps):
         text_encoder.train()
+        #os.system("nvcc --version")
         
         for step, batch in enumerate(train_dataloader):
+            
             #print_gpu_memory()
-            latents = vae.encode(batch["pixel_values"].to(device, dtype = dtype)).latent_dist.sample().detach()
+            latents = vae.encode(batch["pixel_values"].to(device, dtype = weight_dtype)).latent_dist.sample().detach()
 
             latents = latents * vae.config.scaling_factor
             
@@ -274,30 +295,31 @@ def main(ctx: DictConfig):
             
             # Get text embeddings for conditioning
            
-            encoder_hidden_states = text_encoder(batch["input_ids"].to(device))[0].to(dtype=dtype)
+            encoder_hidden_states = text_encoder(batch["input_ids"].to(device))[0].to(dtype=weight_dtype)
             
             #print(encoder_hidden_states)
 
             
             # Predict noise residual
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-            
             # TODO check prediction type, for now I use as it was epslion
+            #target = noise_scheduler.get_velocity(latents, noise, timesteps)
             target = noise
             
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-            loss.backward()
+            accelerator.backward(loss)
             
             optimizer.step()
             optimizer.zero_grad()
-            
+        
+        accelerator.wait_for_everyone()
         prog_bar.set_postfix({"loss": loss.item()})
         prog_bar.update()
             
         if (i + 1) % ctx.training.save_steps == 0:
             learned_embeds = text_encoder.get_input_embeddings().weight[place_holder_token_id]
             learned_embeds_dict = {ctx.placeholder_token: learned_embeds.detach().cpu()}
-            save_path = os.path.join(ctx.output_dir, f"learned_embeds_{ctx.place_holder_token}_{i+1}.pt")
+            save_path = os.path.join(ctx.output_dir, f"learned_embeds_{ctx.placeholder_token}_{i+1}.pt")
             torch.save(learned_embeds_dict, save_path)
     
     learned_embeds = text_encoder.get_input_embeddings().weight[place_holder_token_id]

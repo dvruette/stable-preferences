@@ -16,7 +16,7 @@ training:
   lr_scheduler: "constant"
   lr_warmup_steps: 0
   steps: 10
-  batch_size: 2
+  batch_size: 4
   gradient_accumulation_steps: 4
   max_training_steps: 3000
   save_steps: 5
