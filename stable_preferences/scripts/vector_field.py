@@ -1,9 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_vector_field(vectors):
-    y, x = np.meshgrid(np.arange(vectors.shape[1]), np.arange(vectors.shape[0]))
-    plt.quiver(x, y, vectors[..., 0], vectors[..., 1])
 
 def main():
     pos_points = np.random.multivariate_normal((3, 5), [[5, 0], [0, 2]], size=(30,))
