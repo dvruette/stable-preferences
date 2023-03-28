@@ -1,12 +1,12 @@
-diffusers
-torch
+diffusers==0.14.0
+torch==2.0.0
 numpy
 pandas
 matplotlib
 pillow
-torchvision
+torchvision==0.15.1
 accelerate
 xformers
-transformers
+transformers==4.27.1
 hydra-core
 omegaconf

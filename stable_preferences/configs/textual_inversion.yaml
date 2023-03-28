@@ -2,10 +2,26 @@ hydra:
   job:
     chdir: true
 model_id: stabilityai/stable-diffusion-2-1-base
-image: static/textual_inversion/example_01.png
+train_data_dir: /cluster/home/efedele/stable-preferences/static/textual_inversion/cat_statue
+output_dir: /cluster/home/efedele/stable-preferences/weights/textual_inversion
+learnable_property: "object"
+placeholder_token: "<cat-toy>"
+initializer_token: "toy"
+center_crop: false
+repeats: 100
+resolution: 512
 device: "auto"
 training:
-  lr: 0.1
-  steps: 200
-  batch_size: 2
-  save_steps: 10
+  lr: 5.0e-04
+  lr_scheduler: "constant"
+  lr_warmup_steps: 0
+  steps: 10
+  batch_size: 4
+  gradient_accumulation_steps: 4
+  max_training_steps: 3000
+  save_steps: 5
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_weight_decay: 1e-2
+  adam_epsilon: 1e-08
+  dataloader_num_workers: 0
