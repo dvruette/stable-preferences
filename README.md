@@ -13,6 +13,7 @@ Create virtual env (alternatively, you can use `conda` if preferred):
 ```bash
 python3 -m venv .venv  # create new virtual environment
 source .venv/bin/activate  # activate it
+install pytorch 1.13 (not 2.0 as xformers is currently incompatible)
 pip install -r requirements.txt  # install requirements
 pip install -e .  # install current repository in editable mode
 ```
