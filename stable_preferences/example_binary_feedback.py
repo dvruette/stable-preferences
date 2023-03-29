@@ -63,11 +63,9 @@ def main(ctx: DictConfig):
             device=device,
         )
     img = traj[-1][-1]
-
-    # get the current date as yyyy-mm-dd
     
     date_str = date.today().strftime("%Y-%m-%d")
-    out_folder = os.path.join("outputs", date_str, "example_images")
+    out_folder = os.path.join("outputs", "images", date_str)
     os.makedirs(out_folder, exist_ok=True)
     n_files = len([name for name in os.listdir('./outputs/example_images')])
 
