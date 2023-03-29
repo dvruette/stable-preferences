@@ -10,3 +10,4 @@ xformers
 transformers
 hydra-core
 omegaconf
+scikit-learn

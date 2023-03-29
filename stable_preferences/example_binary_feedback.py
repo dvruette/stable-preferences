@@ -45,7 +45,7 @@ def main(ctx: DictConfig):
             ctx.cfg_scale,
             steps=ctx.steps,
             seed=ctx.seed,
-            only_last=True,
+            only_decode_last=True,
             device=device,
         )
     else:
@@ -58,15 +58,18 @@ def main(ctx: DictConfig):
             ctx.cfg_scale,
             steps=ctx.steps,
             seed=ctx.seed,
-            only_last=True,
+            only_decode_last=True,
             device=device,
         )
     img = traj[-1][-1]
 
     os.makedirs("./outputs/example_images", exist_ok=True)
     n_files = len([name for name in os.listdir('./outputs/example_images')])
-    print(n_files)
-    img.save(f"./outputs/example_images/example{n_files}.png")
+
+    out_path = f"./outputs/example_images/example{n_files}.png"
+    img.save(out_path)
+    print(f"Saved image to {out_path}")
+
     try:
         img.show()
     except:

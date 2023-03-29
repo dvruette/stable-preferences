@@ -33,7 +33,7 @@ def main(ctx: DictConfig):
         ctx.cfg_scale,
         steps=ctx.steps,
         seed=ctx.seed,
-        only_last=True,
+        only_decode_last=True,
         device=device,
     )
     img = traj[-1][-1]
