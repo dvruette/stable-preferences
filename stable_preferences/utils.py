@@ -157,52 +157,67 @@ def generate_trajectory_with_binary_feedback(
             noise_liked = noise_liked.to(torch.float32)
             noise_disliked = noise_disliked.to(torch.float32)
 
-            pref_cond = aggregate_latents(
-                noise_cond,
-                noise_liked.split(batch_size),
-                noise_disliked.split(batch_size),
-                aggregation=aggregation,
-            )
-            pref_uncond = aggregate_latents(
-                noise_uncond,
-                noise_liked.split(batch_size),
-                noise_disliked.split(batch_size),
-                aggregation=aggregation,
-            )
+            if aggregation in ["flow", "softmax"]:
+                flow_steps = 100
+                flow_scale = 1.0
 
-            if t <= 5000: # i think stepps range from 1000 (first) to 0 (last)
-                # I observed that the norm of the pref_cond vector becomes very large, so I normalize it to the norm of the cfg vector
-                # making the norm equal for both results in very high norms, because the noise_cond is "not happy", therefore it helps allowing the 
-                # pref_cond vector, if happy not to scale up to make the cond unhappy.
-                norms.append((pref_cond.norm().item(), (noise_cond - noise_uncond).norm().item()))
-                cfg_vector = noise_cond - noise_uncond
-                pref_norm = pref_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
-                cfg_norm = cfg_vector.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                cond_scale = noise_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                uncond_scale = noise_uncond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
 
-                # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg
-                # pref_cond = pref_cond * (min(pref_norm, cfg_norm) / pref_norm)
-                # guidance = alpha*pref_cond + (1 - alpha)*cfg_vector
+                for _ in range(flow_steps):
+                    pref_cond = aggregate_latents(
+                        noise_cond,
+                        noise_liked.split(batch_size),
+                        noise_disliked.split(batch_size),
+                        aggregation=aggregation,
+                    )
+                    pref_uncond = aggregate_latents(
+                        noise_uncond,
+                        noise_liked.split(batch_size),
+                        noise_disliked.split(batch_size),
+                        aggregation=aggregation,
+                    )
+                    noise_cond += flow_scale/flow_steps * pref_cond
+                    noise_uncond -= flow_scale/flow_steps * pref_uncond
 
-                # guidance_mag = alpha*pref_norm + (1 - alpha)*cfg_norm
-                # guidance_norm = guidance.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
-                # guidance = guidance * (guidance_mag / guidance_norm)
+                noise_cond *= cond_scale / noise_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                noise_uncond *= uncond_scale / noise_uncond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
 
-                # cfg_vec = noise_cond - noise_uncond
-                # guidance = cfg_vec + beta*pref_cond
-
-                pref_noise_cond = noise_cond + 1.0*pref_cond
-                pref_noise_uncond = noise_uncond - 1.0*pref_uncond
-                pref_noise_cond *= noise_cond.std() / pref_noise_cond.std()
-                pref_noise_uncond *= noise_uncond.std() / pref_noise_uncond.std()
-                # pref_noise_cond *= noise_cond.norm() / pref_noise_cond.norm()
-                # pref_noise_uncond *= noise_uncond.norm() / pref_noise_uncond.norm()
-                guidance = pref_noise_cond - pref_noise_uncond
-
+                guidance = noise_cond - noise_uncond
                 noise_pred = noise_cond + cfg_scale*guidance
-                noise_pred = noise_pred.to(z.dtype)
+
             else:
-                # standard cfg
-                noise_pred = noise_cond + (noise_cond - noise_uncond)*cfg_scale
+                preference = aggregate_latents(
+                    noise_cond,
+                    noise_liked.split(batch_size),
+                    noise_disliked.split(batch_size),
+                    aggregation=aggregation,
+                )
+
+                if t <= 5000: # i think stepps range from 1000 (first) to 0 (last)
+                    # I observed that the norm of the preference vector becomes very large, so I normalize it to the norm of the cfg vector
+                    # making the norm equal for both results in very high norms, because the noise_cond is "not happy", therefore it helps allowing the 
+                    # preference vector, if happy not to scale up to make the cond unhappy.
+                    norms.append((preference.norm().item(), (noise_cond - noise_uncond).norm().item()))
+                    cfg_vector = noise_cond - noise_uncond
+                    pref_norm = preference.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                    cfg_norm = cfg_vector.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+
+                    # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg
+                    preference = preference * (min(pref_norm, cfg_norm) / pref_norm)
+                    guidance = alpha*preference + (1 - alpha)*cfg_vector
+
+                    # guidance_mag = alpha*pref_norm + (1 - alpha)*cfg_norm
+                    # guidance_norm = guidance.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                    # guidance = guidance * (guidance_mag / guidance_norm)
+
+                    # cfg_vec = noise_cond - noise_uncond
+                    # guidance = cfg_vec + beta*preference
+
+                    noise_pred = noise_cond + cfg_scale*guidance
+                else:
+                    # standard cfg
+                    noise_pred = noise_cond + (noise_cond - noise_uncond)*cfg_scale
         elif latent_space == "unet":
             sample, emb, resids, fwd_upsample = unet_encode(unet, zs, t, prompt_embd)
             latent_cond, latent_uncond, latent_pos, latent_neg = torch.tensor_split(sample, [batch_size, 2*batch_size, (2+len(liked_prompts))*batch_size])
