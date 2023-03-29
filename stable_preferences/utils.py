@@ -20,7 +20,13 @@ def display_images(images, n_cols=4, size=4):
     return fig
 
 
-def aggregate_latents(pos_z: List[torch.Tensor], neg_z: List[torch.Tensor], aggregation: Literal["mean", "lda"] = "mean"):
+def aggregate_latents(
+    x: torch.Tensor,
+    pos_z: List[torch.Tensor],
+    neg_z: List[torch.Tensor],
+    aggregation: Literal["mean", "lda", "flow", "softmax"] = "mean",
+    softmax_temp: float = 0.1,
+):
     # input: list of length n_samples, elements with shape [batch_size, 4, 64, 64]
     # sanity checks:
     assert len(pos_z) > 0
@@ -47,6 +53,46 @@ def aggregate_latents(pos_z: List[torch.Tensor], neg_z: List[torch.Tensor], aggr
             discriminants.append(torch.cat(coefs, dim=0))
         direction = torch.stack(discriminants).to(pos_z[0].device, dtype=pos_z[0].dtype, non_blocking=True)
         return direction / 64
+    elif aggregation == "flow":
+        pos = torch.stack(pos_z, dim=1)
+        neg = torch.stack(neg_z, dim=1)
+
+        pos_dists = (pos - x).view(pos.size(0), pos.size(1), -1)
+        neg_dists = (neg - x).view(neg.size(0), neg.size(1), -1)
+        pos_dists = pos_dists.norm(dim=-1)
+        neg_dists = neg_dists.norm(dim=-1)
+
+        # pos_score = 1 / (pos_dists**2 + 1)
+        # neg_score = 1 / (neg_dists**2 + 1)
+        pos_score = torch.exp(-pos_dists**2)
+        neg_score = torch.exp(-neg_dists**2)
+        pos_score = pos_score / pos_score.sum(dim=-1, keepdim=True)
+        neg_score = neg_score / neg_score.sum(dim=-1, keepdim=True)
+
+        pos_avg = (pos * pos_score[:, :, None, None, None]).sum(dim=1)
+        neg_avg = (neg * neg_score[:, :, None, None, None]).sum(dim=1)
+        diff = pos_avg - neg_avg
+        # diff = diff / diff.norm(dim=-1, keepdim=True)
+        return diff
+    elif aggregation == "softmax":
+        pos = torch.stack(pos_z, dim=1)
+        neg = torch.stack(neg_z, dim=1)
+
+        pos_sims = (pos * x).view(pos.size(0), pos.size(1), -1)
+        neg_sims = (neg * x).view(neg.size(0), neg.size(1), -1)
+        pos_sims = pos_sims.sum(dim=-1) / softmax_temp / torch.sqrt(torch.tensor(4 * 64 * 64, device=pos.device, dtype=pos.dtype))
+        neg_sims = neg_sims.sum(dim=-1) / softmax_temp / torch.sqrt(torch.tensor(4 * 64 * 64, device=neg.device, dtype=neg.dtype))
+
+        pos_score = torch.softmax(pos_sims, dim=-1)
+        neg_score = torch.softmax(neg_sims, dim=-1)
+
+        pos_avg = (pos * pos_score[:, :, None, None, None]).sum(dim=1)
+        neg_avg = (neg * neg_score[:, :, None, None, None]).sum(dim=1)
+        diff = pos_avg - neg_avg
+        # diff = diff / diff.norm(dim=-1, keepdim=True)
+        return diff
+    else:
+        raise ValueError(f"Unknown aggregation method: {aggregation}")
 
 
 @torch.no_grad()
@@ -59,9 +105,9 @@ def generate_trajectory_with_binary_feedback(
     cfg_scale=5,
     steps=20,
     seed=42,
-    alpha=0.6,
-    beta=2.0,
-    aggregation: Literal["mean", "lda"] = "mean",
+    alpha=0.7,
+    beta=1.0,
+    aggregation: Literal["mean", "lda", "flow", "softmax"] = "flow",
     latent_space: Literal["noise", "unet"] = "noise",
     show_progress=True,
     batch_size=1,
@@ -106,24 +152,54 @@ def generate_trajectory_with_binary_feedback(
         if latent_space == "noise":
             unet_out = unet(zs, t, prompt_embd).sample # layout: pos promt in all samples, neg prompt in all samples, first liked prompt in all samples, second liked prompt in all samples, etc.
             noise_cond, noise_uncond, noise_liked, noise_disliked = torch.tensor_split(unet_out, [batch_size, 2*batch_size, (2+len(liked_prompts))*batch_size])
+            noise_cond = noise_cond.to(torch.float32)
+            noise_uncond = noise_uncond.to(torch.float32)
+            noise_liked = noise_liked.to(torch.float32)
+            noise_disliked = noise_disliked.to(torch.float32)
 
-            preference = aggregate_latents(
+            pref_cond = aggregate_latents(
+                noise_cond,
+                noise_liked.split(batch_size),
+                noise_disliked.split(batch_size),
+                aggregation=aggregation,
+            )
+            pref_uncond = aggregate_latents(
+                noise_uncond,
                 noise_liked.split(batch_size),
                 noise_disliked.split(batch_size),
                 aggregation=aggregation,
             )
 
             if t <= 5000: # i think stepps range from 1000 (first) to 0 (last)
-                # I observed that the norm of the preference vector becomes very large, so I normalize it to the norm of the cfg vector
+                # I observed that the norm of the pref_cond vector becomes very large, so I normalize it to the norm of the cfg vector
                 # making the norm equal for both results in very high norms, because the noise_cond is "not happy", therefore it helps allowing the 
-                # preference vector, if happy not to scale up to make the cond unhappy.
-                norms.append((preference.norm().item(), (noise_cond - noise_uncond).norm().item()))
-                # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg 
-                # preference = preference / preference.norm() * min((noise_cond - noise_uncond).norm(), preference.norm())
-                # guidance = alpha*preference + (1 - alpha)*(noise_cond - noise_uncond)
-                cfg_vec = noise_cond - noise_uncond
-                guidance = cfg_vec + beta*preference
+                # pref_cond vector, if happy not to scale up to make the cond unhappy.
+                norms.append((pref_cond.norm().item(), (noise_cond - noise_uncond).norm().item()))
+                cfg_vector = noise_cond - noise_uncond
+                pref_norm = pref_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                cfg_norm = cfg_vector.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+
+                # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg
+                # pref_cond = pref_cond * (min(pref_norm, cfg_norm) / pref_norm)
+                # guidance = alpha*pref_cond + (1 - alpha)*cfg_vector
+
+                # guidance_mag = alpha*pref_norm + (1 - alpha)*cfg_norm
+                # guidance_norm = guidance.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                # guidance = guidance * (guidance_mag / guidance_norm)
+
+                # cfg_vec = noise_cond - noise_uncond
+                # guidance = cfg_vec + beta*pref_cond
+
+                pref_noise_cond = noise_cond + 1.0*pref_cond
+                pref_noise_uncond = noise_uncond - 1.0*pref_uncond
+                pref_noise_cond *= noise_cond.std() / pref_noise_cond.std()
+                pref_noise_uncond *= noise_uncond.std() / pref_noise_uncond.std()
+                # pref_noise_cond *= noise_cond.norm() / pref_noise_cond.norm()
+                # pref_noise_uncond *= noise_uncond.norm() / pref_noise_uncond.norm()
+                guidance = pref_noise_cond - pref_noise_uncond
+
                 noise_pred = noise_cond + cfg_scale*guidance
+                noise_pred = noise_pred.to(z.dtype)
             else:
                 # standard cfg
                 noise_pred = noise_cond + (noise_cond - noise_uncond)*cfg_scale
@@ -151,6 +227,7 @@ def generate_trajectory_with_binary_feedback(
         else:
             raise ValueError(f"Unknown latent space: {latent_space}")
 
+        noise_pred = noise_pred.to(z.dtype)
         z = scheduler.step(noise_pred, t, z).prev_sample
         if not only_decode_last or t == scheduler.timesteps[-1]:
             y = pipe.decode_latents(z)
