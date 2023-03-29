@@ -1,5 +1,6 @@
 import os
 from tempfile import NamedTemporaryFile
+from datetime import date
 
 import torch
 import hydra
@@ -63,10 +64,14 @@ def main(ctx: DictConfig):
         )
     img = traj[-1][-1]
 
-    os.makedirs("./outputs/example_images", exist_ok=True)
+    # get the current date as yyyy-mm-dd
+    
+    date_str = date.today().strftime("%Y-%m-%d")
+    out_folder = os.path.join("outputs", date_str, "example_images")
+    os.makedirs(out_folder, exist_ok=True)
     n_files = len([name for name in os.listdir('./outputs/example_images')])
 
-    out_path = f"./outputs/example_images/example{n_files}.png"
+    out_path = os.path.join(out_folder, f"example{n_files}.png")
     img.save(out_path)
     print(f"Saved image to {out_path}")
 
