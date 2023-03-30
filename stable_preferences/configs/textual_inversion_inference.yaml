@@ -1,0 +1,10 @@
+hydra:
+  job:
+    chdir: true
+device: "auto"
+model_id: stabilityai/stable-diffusion-2-1-base
+embeddings_path: /cluster/home/efedele/stable-preferences/weights/textual_inversion/learned_embeds_<pink_lights>_30.pt
+output_dir: /cluster/home/efedele/stable-preferences/images/textual_inversion
+prompt: "a picture of a forest with the light of <pink_light>"
+num_samples_per_generation: 2
+num_generations: 2

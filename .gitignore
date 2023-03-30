@@ -5,4 +5,6 @@ example.png
 outputs
 .DS_Store
 jtenv
-tmp*
+weights
+*.err
+*.out

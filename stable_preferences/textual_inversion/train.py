@@ -12,8 +12,16 @@ from PIL import Image
 from omegaconf import DictConfig
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import DDPMScheduler, AutoencoderKL, UNet2DConditionModel
+from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
+from accelerate.utils import ProjectConfiguration, set_seed
 from accelerate import Accelerator
+
+if is_wandb_available():
+    import wandb
+    
+# Will error if the minimal version of diffusers is not installed. Remove at your own risks.
+#check_min_version("0.15.0.dev0")
 
 imagenet_templates_small = [
     "a photo of a {}",
@@ -174,6 +182,10 @@ def print_gpu_memory(indices=[0]):
 
 @hydra.main(config_path="../configs", config_name="textual_inversion", version_base=None)
 def main(ctx: DictConfig):
+    if ctx.report_to == "wandb":
+        if not is_wandb_available():
+            raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
+    
     if ctx.device == "auto":
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         device = "cpu"
@@ -185,6 +197,15 @@ def main(ctx: DictConfig):
     dtype = "fp16" if torch.cuda.is_available() else "no"
     weight_dtype = torch.float16 if dtype == "fp16" else torch.float32
     
+    accelerator = Accelerator(
+        gradient_accumulation_steps=ctx.training.gradient_accumulation_steps,
+        mixed_precision=dtype,
+        log_with=ctx.report_to
+    )
+    
+    if ctx.seed is not None:
+        set_seed(ctx.seed)
+    
     tokenizer = CLIPTokenizer.from_pretrained(ctx.model_id, subfolder="tokenizer")
     num_added_tokens = tokenizer.add_tokens(ctx.placeholder_token)
     if num_added_tokens == 0:
@@ -195,7 +216,9 @@ def main(ctx: DictConfig):
         
     # Get the token ids of both the init token and the placeholder token
     initializer_token_id = tokenizer.encode(ctx.initializer_token, add_special_tokens=False)[0]
+    print(f"Initializer token id: {initializer_token_id}")
     place_holder_token_id = tokenizer.convert_tokens_to_ids(ctx.placeholder_token)
+    print(f"Placeholder token id: {place_holder_token_id}")
     
     # Load stable diffusion model
     text_encoder = CLIPTextModel.from_pretrained(ctx.model_id, subfolder="text_encoder")
@@ -205,9 +228,13 @@ def main(ctx: DictConfig):
     if (torch.cuda.is_available() and is_xformers_available()):
         import xformers
         unet.enable_xformers_memory_efficient_attention()
+        print("Using xformers for memory efficient attention")
+    else:
+        print("Not using xformers for memory efficient attention. Make sure to have downloaded the xformers library and have a GPU available.")
     
     # Resize token embeddings since we have added a token
     text_encoder.resize_token_embeddings(len(tokenizer))
+    print(f"Text encoder has {len(tokenizer)} tokens")
     
     # Initialize the newly added placeholder token with the embeddings of the initializer token which will be optimized later
     token_embeds = text_encoder.get_input_embeddings().weight.data
@@ -250,10 +277,6 @@ def main(ctx: DictConfig):
         eps=ctx.training.adam_epsilon,
     )
     
-    accelerator = Accelerator(
-        gradient_accumulation_steps=ctx.training.gradient_accumulation_steps,
-        mixed_precision=dtype
-    )
     
     text_encoder, optimizer, train_dataloader = accelerator.prepare(
         text_encoder, optimizer, train_dataloader
@@ -262,13 +285,16 @@ def main(ctx: DictConfig):
     # Move vae and unet to device
     vae.to(accelerator.device, dtype=weight_dtype)
     unet.to(accelerator.device, dtype=weight_dtype)
+    
+    print(accelerator.device)
 
     # Keep vae in eval mode as we don't train it
     vae.eval()
     # Keep unet in train mode to enable gradient checkpointing
-    unet.train()
+    unet.eval()
     
-
+    print("***** Running training *****")
+    print(f"  Num examples = {len(train_dataset)}")
     prog_bar = tqdm.trange(ctx.training.steps)
     prog_bar.set_description("Steps")
         
@@ -287,7 +313,7 @@ def main(ctx: DictConfig):
             noise = torch.randn_like(latents)
             bsz = latents.shape[0]
             # sample a random timestep for each image
-            timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
+            timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
             timesteps = timesteps.long()
             
             # Add noise to the latents according to noise magnitude at each timestep (forward diffusion process)
@@ -302,17 +328,26 @@ def main(ctx: DictConfig):
             
             # Predict noise residual
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-            # TODO check prediction type, for now I use as it was epslion
-            #target = noise_scheduler.get_velocity(latents, noise, timesteps)
-            target = noise
+            if noise_scheduler.config.prediction_type == "epsilon":
+                    target = noise
+            elif noise_scheduler.config.prediction_type == "v_prediction":
+                target = noise_scheduler.get_velocity(latents, noise, timesteps)
+            else:
+                raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
             
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
             accelerator.backward(loss)
             
+            # Zero out the gradients for all the token embedding except the newly added 
+            # embedding for the concept we are learning
+            grads = text_encoder.get_input_embeddings().weight.grad
+            index_grads_to_zero = torch.arange(len(tokenizer)) != place_holder_token_id
+            grads.data[index_grads_to_zero, :] = grads.data[index_grads_to_zero, :].fill_(0)
+            
             optimizer.step()
             optimizer.zero_grad()
         
-        accelerator.wait_for_everyone()
+        #accelerator.wait_for_everyone()
         prog_bar.set_postfix({"loss": loss.item()})
         prog_bar.update()
             
@@ -326,6 +361,7 @@ def main(ctx: DictConfig):
     learned_embeds_dict = {ctx.placeholder_token: learned_embeds.detach().cpu()}
     save_path = os.path.join(ctx.output_dir, f"learned_embeds_{ctx.placeholder_token}_final.pt")
     torch.save(learned_embeds_dict, save_path)
+    accelerator.end_training()
 
 
 if __name__ == "__main__":
