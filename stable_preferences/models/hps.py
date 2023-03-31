@@ -1,3 +1,12 @@
+"""
+Human preference score (finetuned clip model)
+
+The pretrained human preference classifier can be downloaded from 
+[OneDrive](https://mycuhk-my.sharepoint.com/:u:/g/personal/1155172150_link_cuhk_edu_hk/EWDmzdoqa1tEgFIGgR5E7gYBTaQktJcxoOYRoTHWzwzNcw?e=b7rgYW).
+Before running the human preference classifier, please make sure you have set up the CLIP environment 
+as specified in the [official repo](https://github.com/openai/CLIP).
+"""
+
 import torch
 import clip
 from PIL import Image
