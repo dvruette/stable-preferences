@@ -28,7 +28,9 @@ class ImageDataset(Dataset):
         return img
 
 
-def load_images(image_paths: List[str]):
+def load_images(image_paths: List[str]) -> List[torch.Tensor]:
+    if not image_paths:
+        return []
     ds = ImageDataset(image_paths)
-    imgs = torch.stack([img for img in ds])
+    imgs = [img for img in ds]
     return imgs

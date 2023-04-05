@@ -1,25 +1,17 @@
 import os
-from tempfile import NamedTemporaryFile
 from datetime import date
 
 import torch
 import hydra
 from omegaconf import DictConfig
 from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler
-import numpy as np
 
-from stable_preferences.utils import generate_trajectory, generate_trajectory_with_binary_feedback
+from stable_preferences.utils import get_free_gpu, generate_trajectory, generate_trajectory_with_binary_feedback
 
 MODE = "binary_feedback"
 
 dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 torch.set_default_dtype(dtype)
-
-def get_free_gpu():
-    with NamedTemporaryFile() as f:
-        os.system('nvidia-smi -q -d Memory |grep -A4 GPU|grep Free >{}'.format(f.name))
-        memory_available = [int(x.split()[2]) for x in open(f.name, 'r').readlines()]
-    return np.argmax(memory_available)
 
 
 @hydra.main(config_path="configs", config_name="example_binary_feedback", version_base=None)

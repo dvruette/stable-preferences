@@ -1,9 +1,11 @@
 model_id: "stabilityai/stable-diffusion-2-1-base"
 prompt: "a beautiful sunset"
 neg_prompt: ""
-liked_prompts: ["a colorful, green rain forest", "a beautiful lion looking into the camera, high detail", "wild forest"]
-disliked_prompts: ["a painting", "orange"]
-cfg_scale: 8
+liked_images:
+  - static/textual_inversion/example_01.png
+disliked_images: []
+cfg_scale: 5
 steps: 20
 seed: 42
 device: "auto"
+save: all
