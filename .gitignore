@@ -8,3 +8,4 @@ jtenv
 weights
 *.err
 *.out
+*tmp*

@@ -15,9 +15,9 @@ from stable_preferences.models.unet_utils import unet_encode, unet_decode
 def get_free_gpu(min_mem=1000):
     try:
         with NamedTemporaryFile() as f:
-            os.system(f"nvidia-smi -q -d Memory | grep -A4 GPU | grep Free > {f.name}")
+            os.system(f"nvidia-smi -q -d Memory | grep -A5 GPU | grep Free > {f.name}")
             memory_available = [int(x.split()[2]) for x in open(f.name, 'r').readlines()]
-        if min(memory_available) < min_mem:
+        if max(memory_available) < min_mem:
             warnings.warn("Not enough memory on GPU, using CPU")
             return torch.device("cpu")
         return torch.device("cuda", np.argmax(memory_available))
@@ -176,7 +176,7 @@ def generate_trajectory_with_binary_feedback(
 
             if aggregation in ["flow", "softmax"]:
                 flow_steps = 100
-                flow_scale = 1.0
+                flow_scale = 0.5
 
                 cond_scale = noise_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
                 uncond_scale = noise_uncond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
@@ -217,11 +217,11 @@ def generate_trajectory_with_binary_feedback(
                     # preference vector, if happy not to scale up to make the cond unhappy.
                     norms.append((preference.norm().item(), (noise_cond - noise_uncond).norm().item()))
                     cfg_vector = noise_cond - noise_uncond
-                    pref_norm = preference.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
-                    cfg_norm = cfg_vector.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                    pref_norm = preference.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1)
+                    cfg_norm = cfg_vector.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1)
 
                     # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg
-                    preference = preference * (min(pref_norm, cfg_norm) / pref_norm)
+                    preference = preference * (torch.minimum(pref_norm, cfg_norm) / pref_norm).reshape(batch_size, 1, 1, 1)
                     guidance = alpha*preference + (1 - alpha)*cfg_vector
 
                     # guidance_mag = alpha*pref_norm + (1 - alpha)*cfg_norm
@@ -263,7 +263,8 @@ def generate_trajectory_with_binary_feedback(
         z = scheduler.step(noise_pred, t, z).prev_sample
         if not only_decode_last or t == scheduler.timesteps[-1]:
             y = pipe.decode_latents(z)
-            traj.append(pipe.numpy_to_pil(y))
+            piled = pipe.numpy_to_pil(y)
+            traj.append(piled)
     print("norms", norms)
     return traj
     

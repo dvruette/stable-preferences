@@ -53,20 +53,24 @@ def main(ctx: DictConfig):
             seed=ctx.seed,
             only_decode_last=True,
             device=device,
+            aggregation=ctx.aggregation,
+            latent_space=ctx.latent_space,
+            batch_size=ctx.batch_size,
         )
-    img = traj[-1][-1]
+    imgs = traj[:][-1]
     
     date_str = date.today().strftime("%Y-%m-%d")
     out_folder = os.path.join("outputs", "images", date_str)
     os.makedirs(out_folder, exist_ok=True)
-    n_files = len([name for name in os.listdir(out_folder)])
-
-    out_path = os.path.join(out_folder, f"example_{n_files}.png")
-    img.save(out_path)
-    print(f"Saved image to {out_path}")
+    
+    for img in imgs:
+        n_files = len([name for name in os.listdir(out_folder)])
+        out_path = os.path.join(out_folder, f"example_{n_files}.png")
+        img.save(out_path)
+        print(f"Saved image to {out_path}")
 
     try:
-        img.show()
+        imgs[-1].show()
     except:
         pass
 
