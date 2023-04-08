@@ -15,9 +15,6 @@ from transformers import CLIPModel, CLIPImageProcessor, AutoTokenizer
 from stable_preferences.utils import get_free_gpu
 
 
-dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-torch.set_default_dtype(dtype)
-
 class MakeCutouts(nn.Module):
     def __init__(self, cut_size, cutn, cut_pow=1.):
         super().__init__()
@@ -40,22 +37,26 @@ class MakeCutouts(nn.Module):
 
     
 def spherical_distance(x, y):
-    x = F.normalize(x, dim=-1).unsqueeze(1)
-    y = F.normalize(y, dim=-1).unsqueeze(0)
-    l = (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2)
-    return l
+    x = F.normalize(x, dim=-1)
+    y = F.normalize(y, dim=-1)
+    return (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2)
+
 
 @torch.no_grad()
 def generate_trajectory_with_clip_guidance(
     pipe,
     clip,
+    clip_tokenizer,
+    feature_extractor,
     pos_prompt="a photo of an astronaut riding a horse on mars",
     neg_prompt="",
+    clip_prompt="",
     pos_images=None,
     neg_images=None,
     cfg_scale=7,
     n_cuts=4,
-    alpha=4000.0,
+    use_cutouts=False,
+    clip_scale=100.0,
     steps=20,
     seed=42,
     show_progress=True,
@@ -70,30 +71,47 @@ def generate_trajectory_with_clip_guidance(
     pipe.to(device)
     clip.to(device)
 
-    clip_img_size = clip.config.vision_config.image_size
-    # crop = T.RandomCrop(clip_img_size)
-    make_cutouts = MakeCutouts(clip_img_size, n_cuts)
+    slice_size = unet.config.attention_head_dim // 2
+    unet.set_attention_slice(slice_size)
 
-    if seed is not None:
-        torch.manual_seed(seed)
-    z = torch.randn(batch_size, 4, 64, 64, device=device)
-    z = z * scheduler.init_noise_sigma
+    clip_img_size = feature_extractor.size["shortest_edge"]
+    make_cutouts = MakeCutouts(clip_img_size, n_cuts)
+    resize = T.Resize(clip_img_size)
+    normalize = T.Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
 
     scheduler.set_timesteps(steps, device=device)
-    prompt_tokens = tokenizer([pos_prompt] + [neg_prompt], return_tensors="pt", padding=True, truncation=True).to(z.device)
-    prompt_embd = text_encoder(**prompt_tokens).last_hidden_state
+
+    prompt_tokens = tokenizer(
+        [pos_prompt] + [neg_prompt],
+        padding="max_length",
+        max_length=tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+    ).to(device)
+    prompt_embd = text_encoder(prompt_tokens.input_ids).last_hidden_state
     pos_prompt_embd = prompt_embd[:1] # first element
     neg_prompt_embd = prompt_embd[1:2] # second element
     prompt_embd = torch.cat([pos_prompt_embd] * batch_size + [neg_prompt_embd] * batch_size)
+
+    if seed is not None:
+        torch.manual_seed(seed)
+    z = torch.randn(batch_size, 4, 64, 64, device=device, dtype=prompt_embd.dtype)
+    z = z * scheduler.init_noise_sigma
 
     if pos_images is not None:
         pos_img_embd = clip.get_image_features(pos_images.to(device, dtype=z.dtype))
     if neg_images is not None:
         neg_img_embd = clip.get_image_features(neg_images.to(device, dtype=z.dtype))
 
-    clip_tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch16")
-    tokens = clip_tokenizer(["picture of a mountain lake"], return_tensors="pt").to(device)
-    clip_prompt_embd = clip.get_text_features(**tokens)
+    if clip_prompt:
+        tokens = clip_tokenizer(
+            [clip_prompt],
+            truncation=True,
+            return_tensors="pt",
+        ).to(device)
+        clip_prompt_embd = clip.get_text_features(tokens.input_ids)
+        clip_prompt_embd = clip_prompt_embd / clip_prompt_embd.norm(p=2, dim=-1, keepdim=True)
+
 
     iterator = scheduler.timesteps
     if show_progress:
@@ -101,66 +119,85 @@ def generate_trajectory_with_clip_guidance(
 
     traj = []
     for i, t in enumerate(iterator):
-        if hasattr(scheduler, "sigma_t"):
-            sigma = scheduler.sigma_t[t]
-        elif hasattr(scheduler, "sigma"):
-            sigma = scheduler.sigma[t]
-        else:
-            raise ValueError("Unknown scheduler, doesn't have sigma_t or sigma attribute.")
-
-        z = scheduler.scale_model_input(z, t)
-        zs = torch.cat(2*[z], dim=0)
-        assert zs.shape == (batch_size * 2, 4, 64, 64)
-
-        unet_out = unet(zs, t, prompt_embd).sample
-        noise_cond, noise_uncond = unet_out.chunk(2)
-
-        # guidance = noise_cond
-        # noise_pred = noise_cond
-        noise_pred = noise_cond + cfg_scale*(noise_cond - noise_uncond)
-
         with torch.enable_grad():
-            # noise_cond = noise_cond.detach().requires_grad_()
-            # noise_pred = noise_cond + (noise_cond - noise_uncond)
-            noise_pred = noise_pred.detach().requires_grad_()
+            z_cond = z.detach().requires_grad_()
+            zs = torch.cat([z_cond, z], dim=0)
+            zs = scheduler.scale_model_input(zs, t)
+
+            unet_out = unet(zs, t, prompt_embd).sample
+            noise_cond, noise_uncond = unet_out.chunk(2)
+
+            alpha_prod_t = scheduler.alphas_cumprod[t]
+            beta_prod_t = 1 - alpha_prod_t
             
-            lats_x0 = z - sigma * noise_pred
+            lats_x0 = (z_cond - beta_prod_t ** (0.5) * noise_cond) / alpha_prod_t ** (0.5)
+            fac = torch.sqrt(beta_prod_t)
+            sample_x0 = lats_x0 * (fac) + z_cond * (1 - fac)
 
-            image = vae.decode((1 / vae.config.scaling_factor) * lats_x0).sample
-            image = (image / 2 + .5).clamp(0, 1)
-            traj.append(pipe.numpy_to_pil(image.detach().cpu().permute(0, 2, 3, 1).float().numpy()))
+            sample_x0 = 1 / vae.config.scaling_factor * sample_x0
+            image = vae.decode(sample_x0).sample
+            image = (image / 2 + 0.5).clamp(0, 1)
 
-            # cropped_imgs = []
-            # for _ in range(n_cuts):
-            #     # cropped = crop(image.to(torch.float32)).to(image.dtype)
-            #     cropped = crop(image)
-            #     cropped_imgs.append(F.adaptive_avg_pool2d(cropped, (clip_img_size, clip_img_size)))
-            # cropped_img = torch.stack(cropped_imgs).view(-1, 3, clip_img_size, clip_img_size)
-            cropped_img = make_cutouts(image)
+            if use_cutouts:
+                cropped_img = torch.cat([make_cutouts(image), resize(image)], dim=0)
+            else:
+                cropped_img = resize(image)
+            cropped_img = normalize(cropped_img).to(z.dtype)
             img_embd = clip.get_image_features(cropped_img)
+            img_embd = img_embd / img_embd.norm(p=2, dim=-1, keepdim=True)
 
             losses = []
-            prompt_dist = spherical_distance(img_embd, clip_prompt_embd)
-            losses.append(prompt_dist.view(n_cuts, -1).mean(dim=0))
+            # pos_dist = spherical_distance(img_embd, pos_img_embd)
+            # losses.append(pos_dist.mean())
 
-            # if pos_images is not None:
-            #     pos_dist = spherical_distance(img_embd, pos_img_embd)  # shape: (batch_size * n_cuts, num_pos)
-            #     losses.append(pos_dist.view(n_cuts, -1).mean(dim=0))
+            # if clip_prompt:
+            #     prompt_dist = spherical_distance(img_embd, clip_prompt_embd)
+            #     if use_cutouts:
+            #         prompt_dist = prompt_dist.view(n_cuts + 1, batch_size, -1)
+            #         losses.append(prompt_dist[:-1].sum(2).mean(0).mean())
+            #     else:
+            #         prompt_dist = prompt_dist.view(1, batch_size, -1)
+            #     losses.append(prompt_dist[-1].mean()) # resized
+
+            if pos_images is not None:
+                pos_dist = spherical_distance(img_embd, pos_img_embd)
+                if use_cutouts:
+                    pos_dist = pos_dist.view(n_cuts + 1, batch_size, -1)
+                    losses.append(pos_dist[:-1].sum(2).mean(0).mean())
+                    losses.append(pos_dist[-1].mean())
+                else:
+                    losses.append(pos_dist.mean())
 
             # if neg_images is not None:
-            #     neg_dist = spherical_distance(img_embd, neg_img_embd)
-            #     losses.append(neg_dist.view(n_cuts, -1).mean(dim=0))
+            #     neg_dist = -spherical_distance(img_embd, neg_img_embd)
+            #     if use_cutouts:
+            #         neg_dist = neg_dist.view(n_cuts + 1, batch_size, -1)
+            #         losses.append(neg_dist[:-1].sum(2).mean(0).mean())
+            #         losses.append(neg_dist[-1].mean())
+            #     else:
+            #         losses.append(neg_dist.mean())
 
             # compute gradient
-            gradient = torch.autograd.grad(torch.stack(losses).sum(), noise_pred)[0]
-            mag = gradient.square().sum().sqrt()
-            gradient = gradient * mag.clamp(max=0.01) / mag
+            loss = torch.stack(losses).sum()
+            grads = -torch.autograd.grad(loss, z_cond)[0]
+            mag = grads.square().sum().sqrt()
+            grads = grads * mag.clamp(max=0.025) / mag
+
             # apply gradient to noise
-            noise_pred = noise_pred.detach() - (gradient.detach() * alpha * sigma**2)
+            # noise_pred = (noise_cond + cfg_scale*(noise_cond - noise_uncond)).detach()
+            # noise_pred = noise_pred.detach() - (clip_scale * torch.sqrt(beta_prod_t) * grads.detach())
+            noise_cond = noise_cond.detach() - (clip_scale * torch.sqrt(beta_prod_t) * grads.detach())
+            noise_pred = noise_cond + cfg_scale*(noise_cond - noise_uncond)
 
-
-        noise_pred = noise_pred.to(z.dtype)
         z = scheduler.step(noise_pred, t, z).prev_sample
+        traj.append(pipe.numpy_to_pil(image.detach().cpu().permute(0, 2, 3, 1).float().numpy()))
+    
+    # scale and decode the image latents with vae
+    x0 = 1 / vae.config.scaling_factor * z
+    image = vae.decode(x0).sample
+    image = (image / 2 + 0.5).clamp(0, 1)
+    traj.append(pipe.numpy_to_pil(image.detach().cpu().permute(0, 2, 3, 1).float().numpy()))
+
     return traj
 
 
@@ -168,9 +205,14 @@ def generate_trajectory_with_clip_guidance(
 def main(ctx: DictConfig):
     # load models
     scheduler = DPMSolverSinglestepScheduler.from_pretrained(ctx.model_id, subfolder="scheduler")
-    pipe = StableDiffusionPipeline.from_pretrained(ctx.model_id, scheduler=scheduler, torch_dtype=dtype)
-    clip = CLIPModel.from_pretrained("openai/clip-vit-base-patch16")
-    processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch16")
+    pipe = StableDiffusionPipeline.from_pretrained(ctx.model_id, scheduler=scheduler, torch_dtype=torch.float16)
+    clip = CLIPModel.from_pretrained("laion/CLIP-ViT-B-32-laion2B-s34B-b79K", torch_dtype=torch.float16)
+    processor = CLIPImageProcessor.from_pretrained("laion/CLIP-ViT-B-32-laion2B-s34B-b79K")
+    clip_tokenizer = AutoTokenizer.from_pretrained("laion/CLIP-ViT-B-32-laion2B-s34B-b79K")
+
+    clip.requires_grad_(False)
+    pipe.unet.requires_grad_(False)
+    pipe.vae.requires_grad_(False)
 
     print(f"Unet: {sum(p.numel() for p in pipe.unet.parameters()) / 1e6:.0f}M")
     print(f"VAE: {sum(p.numel() for p in pipe.vae.parameters()) / 1e6:.0f}M")
@@ -200,11 +242,15 @@ def main(ctx: DictConfig):
     traj = generate_trajectory_with_clip_guidance(
         pipe=pipe,
         clip=clip,
+        clip_tokenizer=clip_tokenizer,
+        feature_extractor=processor,
         pos_prompt=ctx.prompt,
         neg_prompt=ctx.neg_prompt,
+        clip_prompt=ctx.clip_prompt,
         pos_images=liked_imgs,
         neg_images=disliked_imgs,
         cfg_scale=ctx.cfg_scale,
+        clip_scale=ctx.clip_scale,
         steps=ctx.steps,
         seed=ctx.seed,
         device=device,

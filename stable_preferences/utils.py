@@ -17,7 +17,7 @@ def get_free_gpu(min_mem=1000):
         with NamedTemporaryFile() as f:
             os.system(f"nvidia-smi -q -d Memory | grep -A4 GPU | grep Free > {f.name}")
             memory_available = [int(x.split()[2]) for x in open(f.name, 'r').readlines()]
-        if min(memory_available) < min_mem:
+        if max(memory_available) < min_mem:
             warnings.warn("Not enough memory on GPU, using CPU")
             return torch.device("cpu")
         return torch.device("cuda", np.argmax(memory_available))

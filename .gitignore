@@ -2,9 +2,12 @@ __pycache__
 .venv
 *.egg-info
 example.png
-outputs
 .DS_Store
 jtenv
 weights
 *.err
 *.out
+
+# Generated images and logs
+outputs
+clip_guided_sd/**/*.png

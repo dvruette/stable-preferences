@@ -1,11 +1,18 @@
-model_id: "stabilityai/stable-diffusion-2-1-base"
-prompt: "a beautiful sunset"
-neg_prompt: ""
+model_id: "runwayml/stable-diffusion-v1-5"
+# prompt: "a beautiful sunset"
+prompt: "stunning anime portrait of a girl, profile shot, side view, futuristic, modern fashion, vibrant colors, digital art, trending on artstation, highest detail, 8k, octane render, by wlop, manga"
+neg_prompt: "ugly art, weird colors, bad composition, bad lighting, bad art, bad mod, off center, too close, closeup"
+# clip_prompt: "picture of a mountain lake"
+clip_prompt: ""
 liked_images:
   - static/textual_inversion/example_01.png
-disliked_images: []
+# disliked_images:
+#   - static/textual_inversion/example_02.png
+disliked_images:
+  - static/textual_inversion/image_107_0.png
 cfg_scale: 5
+clip_scale: 100
 steps: 20
 seed: 42
 device: "auto"
-save: all
+save: last
