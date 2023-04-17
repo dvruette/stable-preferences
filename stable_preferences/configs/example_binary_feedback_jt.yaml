@@ -1,0 +1,15 @@
+model_id: "runwayml/stable-diffusion-1-5" # "stabilityai/stable-diffusion-2-1" #"runwayml/stable-diffusion-v1-5"
+# prompt: "Pixar style, steam train driving through the snow, the polar express, scenic landscape, stunning environment, dusk, ultra detailed, octane render, ultra detail, intricate detail, volumetric lighting, dreamy magical atmosphere, vivid colours, photorealistic, photography, lifelike, high resolution, digital art, ultra wide angle lens, aerial view, elevated view, wallpaper --ar 3:2 --v 4"
+# prompt: "a beautiful mountain scenery, high-res, wallpaper, national geographic"
+prompt: "Photo of a cat riding on a bicycle." # "temple in ruines, forest, stairs, columns, cinematic, detailed, atmospheric, epic, concept art, Matte painting, background, mist, photo-realistic, concept art, volumetric light, cinematic epic + rule of thirds octane render, 8k, corona render, movie concept art, octane render, cinematic, trending on artstation, movie concept art, cinematic composition , ultra-detailed, realistic , hyper-realistic , volumetric lighting, 8k –ar 2:3 –test –uplight" #"eagles flying in the cold air, national geographic"
+neg_prompt: ""
+liked_prompts: ["a beautiful mountain scenery, high-res, wallpaper, national geographic", "Pixar style, steam train driving through the snow, the polar express, scenic landscape, stunning environment, dusk, ultra detailed, octane render, ultra detail, intricate detail, volumetric lighting, dreamy magical atmosphere, vivid colours, photorealistic, photography, lifelike, high resolution, digital art, ultra wide angle lens, aerial view, elevated view, wallpaper --ar 3:2 --v 4"] #["a colorful, green rain forest", "a beautiful lion looking into the camera, high detail", "wild forest"]
+disliked_prompts: ["a painting of abstrat art", "low-res bird-eye view", "ugly image, flat colors"] #["a painting", "orange"]
+cfg_scale: 8
+steps: 20
+seed: 49
+device: "auto"
+aggregation: "mean"
+latent_space: "noise"
+batch_size: 1
+alpha: 0.0

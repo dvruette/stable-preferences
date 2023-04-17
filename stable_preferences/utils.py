@@ -8,11 +8,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tqdm
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from einops import rearrange, pack, unpack, repeat
 
 from stable_preferences.models.unet_utils import unet_encode, unet_decode
 
 
-def get_free_gpu(min_mem=1000):
+def get_free_gpu(min_mem=9000):
     try:
         with NamedTemporaryFile() as f:
             os.system(f"nvidia-smi -q -d Memory | grep -A5 GPU | grep Free > {f.name}")
@@ -71,8 +72,10 @@ def aggregate_latents(
         direction = torch.stack(discriminants).to(pos_z[0].device, dtype=pos_z[0].dtype, non_blocking=True)
         return direction / 64
     elif aggregation == "flow":
+        # what is this doing?? -> (batch, prompts, 4, 64, 64)
         pos = torch.stack(pos_z, dim=1)
         neg = torch.stack(neg_z, dim=1)
+        assert(x.shape[0] == pos.shape[0] and x.shape[1:] == pos.shape[2:])
 
         pos_dists = (pos - x).view(pos.size(0), pos.size(1), -1)
         neg_dists = (neg - x).view(neg.size(0), neg.size(1), -1)
@@ -81,10 +84,24 @@ def aggregate_latents(
 
         # pos_score = 1 / (pos_dists**2 + 1)
         # neg_score = 1 / (neg_dists**2 + 1)
-        pos_score = torch.exp(-pos_dists**2)
-        neg_score = torch.exp(-neg_dists**2)
-        pos_score = pos_score / pos_score.sum(dim=-1, keepdim=True)
-        neg_score = neg_score / neg_score.sum(dim=-1, keepdim=True)
+        # pos_score = torch.exp(-pos_dists**2)
+        # neg_score = torch.exp(-neg_dists**2)
+        # print(pos_score.sum(dim=-1, keepdim=True)," ", neg_score.sum(dim=-1, keepdim=True))
+        # pos_score = pos_score / pos_score.sum(dim=-1, keepdim=True)
+        # neg_score = neg_score / neg_score.sum(dim=-1, keepdim=True)
+
+        # pos_avg = (pos * pos_score[:, :, None, None, None]).sum(dim=1)
+        # neg_avg = (neg * neg_score[:, :, None, None, None]).sum(dim=1)
+        # diff = pos_avg - neg_avg
+
+        pos_exp = -pos_dists**2
+        neg_exp = -neg_dists**2
+
+        pos_logsumexp = torch.logsumexp(pos_exp, dim=-1, keepdim=True)
+        neg_logsumexp = torch.logsumexp(neg_exp, dim=-1, keepdim=True)
+
+        pos_score = torch.exp(pos_exp - pos_logsumexp)
+        neg_score = torch.exp(neg_exp - neg_logsumexp)
 
         pos_avg = (pos * pos_score[:, :, None, None, None]).sum(dim=1)
         neg_avg = (neg * neg_score[:, :, None, None, None]).sum(dim=1)
@@ -122,7 +139,7 @@ def generate_trajectory_with_binary_feedback(
     cfg_scale=5,
     steps=20,
     seed=42,
-    alpha=0.7,
+    alpha=0.6,
     beta=1.0,
     aggregation: Literal["mean", "lda", "flow", "softmax"] = "flow",
     latent_space: Literal["noise", "unet"] = "noise",
@@ -153,7 +170,12 @@ def generate_trajectory_with_binary_feedback(
     disliked_prompts_embd = prompt_embd[2+len(liked_prompts):]
     # print("pos_prompt_embd.shape", pos_prompt_embd.shape)
     # print("liked_prompt_embd.shape", liked_prompts_embd.shape)
-    prompt_embd = torch.cat([pos_prompt_embd] * batch_size + [neg_prompt_embd] * batch_size + [p.unsqueeze(0) for p in liked_prompts_embd for _ in range(batch_size)] + [p.unsqueeze(0) for p in disliked_prompts_embd for _ in range(batch_size)])
+    # prompt_embd = torch.cat([pos_prompt_embd] * batch_size + [neg_prompt_embd] * batch_size + [p.unsqueeze(0) for p in liked_prompts_embd for _ in range(batch_size)] + [p.unsqueeze(0) for p in disliked_prompts_embd for _ in range(batch_size)])
+    # prompt_embd = pack([pos_prompt_embd, neg_prompt_embd, liked_prompts_embd, disliked_prompts_embd])
+    # prompt_embd_old = torch.cat([pos_prompt_embd] * batch_size + [neg_prompt_embd] * batch_size + [p.unsqueeze(0) for p in liked_prompts_embd for _ in range(batch_size)] + [p.unsqueeze(0) for p in disliked_prompts_embd for _ in range(batch_size)])
+    prompt_embd = repeat(prompt_embd, 'prompts a b -> (prompts batch) a b', batch = batch_size)
+    # assert prompt_embd.shape == prompt_embd_old.shape, (prompt_embd.shape, prompt_embd_old.shape)
+
 
     iterator = scheduler.timesteps
     if show_progress:
@@ -164,15 +186,24 @@ def generate_trajectory_with_binary_feedback(
     for iteration, t in enumerate(iterator):
         z = scheduler.scale_model_input(z, t)
         zs = torch.cat((2+len(liked_prompts)+len(disliked_prompts))*[z], dim=0)
-        assert zs.shape == (batch_size * (2+len(liked_prompts)+len(disliked_prompts)), 4, 64, 64)
+        assert zs.shape == (batch_size * (2+len(liked_prompts)+len(disliked_prompts)), 4, 64, 64), zs.shape
 
         if latent_space == "noise":
             unet_out = unet(zs, t, prompt_embd).sample # layout: pos promt in all samples, neg prompt in all samples, first liked prompt in all samples, second liked prompt in all samples, etc.
-            noise_cond, noise_uncond, noise_liked, noise_disliked = torch.tensor_split(unet_out, [batch_size, 2*batch_size, (2+len(liked_prompts))*batch_size])
-            noise_cond = noise_cond.to(torch.float32)
-            noise_uncond = noise_uncond.to(torch.float32)
-            noise_liked = noise_liked.to(torch.float32)
-            noise_disliked = noise_disliked.to(torch.float32)
+            
+            unet_out = unet_out.to(torch.float32)
+            # noise_cond_o, _,_,_ = torch.tensor_split(unet_out, [batch_size, 2*batch_size, (2+len(liked_prompts))*batch_size])
+            # unet_out = rearrange(unet_out, '(prompts batch) a b c -> prompts batch a b c', batch=batch_size)
+            noise_cond, noise_uncond, noise_liked, noise_disliked = unpack(
+                unet_out, 
+                [(batch_size,),(batch_size,),(len(liked_prompts)*batch_size,), (len(disliked_prompts)*batch_size,)], 
+                '* a b c')
+            # assert noise_cond.shape == noise_cond_o.shape, (noise_cond.shape, noise_cond_o.shape)
+            # noise_cond, noise_uncond, noise_liked, noise_disliked = torch.tensor_split(unet_out, [batch_size, 2*batch_size, (2+len(liked_prompts))*batch_size])
+            # noise_cond = noise_cond.to(torch.float32)
+            # noise_uncond = noise_uncond.to(torch.float32)
+            # noise_liked = noise_liked.to(torch.float32)
+            # noise_disliked = noise_disliked.to(torch.float32)
 
             if aggregation in ["flow", "softmax"]:
                 flow_steps = 100
@@ -197,10 +228,11 @@ def generate_trajectory_with_binary_feedback(
                     noise_cond += flow_scale/flow_steps * pref_cond
                     noise_uncond -= flow_scale/flow_steps * pref_uncond
 
+                # print(noise_cond.norm().item(), noise_uncond.norm().item())
                 noise_cond *= cond_scale / noise_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
                 noise_uncond *= uncond_scale / noise_uncond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
-
                 guidance = noise_cond - noise_uncond
+                norms.append(guidance.view(batch_size, -1).norm()) 
                 noise_pred = noise_cond + cfg_scale*guidance
 
             else:
@@ -211,13 +243,13 @@ def generate_trajectory_with_binary_feedback(
                     aggregation=aggregation,
                 )
 
-                if t <= 5000: # i think stepps range from 1000 (first) to 0 (last)
+                if t >= 400: # i think stepps range from 1000 (first) to 0 (last)
                     # I observed that the norm of the preference vector becomes very large, so I normalize it to the norm of the cfg vector
                     # making the norm equal for both results in very high norms, because the noise_cond is "not happy", therefore it helps allowing the 
                     # preference vector, if happy not to scale up to make the cond unhappy.
                     norms.append((preference.norm().item(), (noise_cond - noise_uncond).norm().item()))
                     cfg_vector = noise_cond - noise_uncond
-                    pref_norm = preference.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1)
+                    pref_norm = preference.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1) + 1e-8
                     cfg_norm = cfg_vector.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1)
 
                     # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg
@@ -239,6 +271,7 @@ def generate_trajectory_with_binary_feedback(
             sample, emb, resids, fwd_upsample = unet_encode(unet, zs, t, prompt_embd)
             latent_cond, latent_uncond, latent_pos, latent_neg = torch.tensor_split(sample, [batch_size, 2*batch_size, (2+len(liked_prompts))*batch_size])
             preference = aggregate_latents(
+                None,
                 latent_pos.split(batch_size),
                 latent_neg.split(batch_size),
                 aggregation=aggregation,

@@ -42,6 +42,10 @@ def main(ctx: DictConfig):
             device=device,
         )
     else:
+        # check if alpha is in the ctx
+        additional_args = {}
+        if "alpha" in ctx:
+            additional_args["alpha"] = ctx.alpha
         traj = generate_trajectory_with_binary_feedback(
             pipe,
             ctx.prompt,
@@ -56,6 +60,7 @@ def main(ctx: DictConfig):
             aggregation=ctx.aggregation,
             latent_space=ctx.latent_space,
             batch_size=ctx.batch_size,
+            **additional_args
         )
     imgs = traj[:][-1]
     

@@ -10,3 +10,4 @@ device: "auto"
 aggregation: "flow"
 latent_space: "noise"
 batch_size: 1
+alpha: 0.7
