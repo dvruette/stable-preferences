@@ -12,3 +12,9 @@ weights
 # Generated images and logs
 outputs
 clip_guided_sd/**/*.png
+
+# vscode files
+.vscode
+human_preference_dataset/dataset
+human_preference_dataset/weights
+human_preference_dataset/adapted_model
