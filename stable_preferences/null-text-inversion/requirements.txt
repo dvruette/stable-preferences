@@ -1,0 +1,13 @@
+diffusers==0.14.0
+torch==2.0.0
+numpy
+pandas
+matplotlib
+pillow
+torchvision==0.15.1
+accelerate
+xformers
+transformers==4.27.1
+hydra-core
+omegaconf
+scikit-learn
