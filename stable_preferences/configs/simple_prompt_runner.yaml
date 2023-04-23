@@ -1,0 +1,17 @@
+model_version: "1.5"
+prompt: "Photo of a cat riding on a bicycle."
+liked_prompts: []
+disliked_prompts: []
+unet_max_chunk_size: 2
+n_images: 4
+walk_distance: 8 # in the case of latent_noise and constant_direction and preference_portion 0, this is the cfg scale, i.e. "it walks in the noise space so far into the constant preference direction ignoring the liked disliked"
+walk_steps: 1
+denoising_steps: 20
+
+field: "constant_direction"
+space: "latent_noise"
+seed: 42
+additional_args: { # additional parameters specifically for the field and space
+    clip_preference_vec: false,
+    preference_portion: 1.0,
+}
