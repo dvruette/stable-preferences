@@ -40,11 +40,6 @@ def main(ctx: DictConfig):
         img.save(out_path)
         print(f"Saved image to {out_path}")
 
-    try:
-        imgs[-1].show()
-    except:
-        pass
-
 
 if __name__ == "__main__":
     main()

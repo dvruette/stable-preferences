@@ -124,14 +124,17 @@ class StableDiffuserWithBinaryFeedback:
         loss_t = torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations)
         loss_t.backward()
         grad_norm = current_points.grad.norm()
-        lr = torch.tensor(1/3) * norm_to_walk / max(grad_norm,1.0)
+        lr = 3000 # torch.tensor(1/3) * norm_to_walk / max(grad_norm,1.0)
 
         optimizer = optim.SGD([current_points], lr=lr)
-        convergence_threshold = 1e-3
+        convergence_threshold = 1e-5
         max_iterations = 100
 
+        iterations_used=0
+        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations)} in {iterations_used} many iterations")
         for iteration in range(max_iterations):
             optimizer.zero_grad()
+
             current_points_in_space = space_converter(current_points)
             loss = torch.nn.functional.mse_loss(current_points_in_space, in_space_destinations)
             if loss.item() < convergence_threshold:
@@ -139,10 +142,11 @@ class StableDiffuserWithBinaryFeedback:
                 break
             loss.backward()
             optimizer.step()
-        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations)}")
+            iterations_used+=1
+        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations)} in {iterations_used} many iterations")
         return current_points.clone().detach().requires_grad_(False)
         
-
+    @torch.no_grad()
     def generate(
         self,
         prompt="a photo of an astronaut riding a horse on mars",
@@ -161,9 +165,6 @@ class StableDiffuserWithBinaryFeedback:
         if seed is not None:
             torch.manual_seed(seed)
 
-        text_encoder = self.diffusion_pipe.text_encoder
-        # vae = pipe.vae
-        tokenizer = self.diffusion_pipe.tokenizer
         if binary_feedback_type == "prompt":
             liked_prompts_embds, disliked_prompts_embds = self.initialize_prompts(
                 liked, disliked
@@ -190,14 +191,14 @@ class StableDiffuserWithBinaryFeedback:
         z = z * scheduler.init_noise_sigma
         for iteration, t in enumerate(iterator):
             z_single = scheduler.scale_model_input(z, t)
-            z_all = repeat(z, "batch a b c -> (batch prompts) a b c", prompts=2 + len(liked) + len(disliked)) # we generate the next z for all prompts and then combine
+            z_all = repeat(z_single, "batch a b c -> (batch prompts) a b c", prompts=2 + len(liked) + len(disliked)) # we generate the next z for all prompts and then combine
 
             liked_prompts_embd = liked_prompts_embds[iteration]
             disliked_prompts_embd = disliked_prompts_embds[iteration]
             cond_prompt_embd = cond_prompt_embds[iteration]
             uncond_prompt_embd = uncond_prompt_embds[iteration]
             prompt_embd, ps = pack(
-                [a for a in [uncond_prompt_embd, cond_prompt_embd, liked_prompts_embd, disliked_prompts_embd] if 0 not in a.shape], # avoid empty concatenation throwing errors 
+                [a for a in [cond_prompt_embd, uncond_prompt_embd, liked_prompts_embd, disliked_prompts_embd] if 0 not in a.shape], # avoid empty concatenation throwing errors 
                 '* a b')
             batched_prompt_embd = repeat(prompt_embd, 'prompts a b -> (batch prompts) a b', batch=self.n_images)
             
@@ -213,9 +214,6 @@ class StableDiffuserWithBinaryFeedback:
                 [(),(),(len(liked),), (len(disliked),)],
                 'batch * a b c'
             )
-            # this stuff is unnecessary, but it makes the code more readable i guess
-            # noise_liked = rearrange(noise_liked, '(liked batch) a b c -> batch liked a b c', batch=self.n_images)
-            # noise_disliked = rearrange(noise_disliked, '(disliked batch) a b c -> batch disliked a b c', batch=self.n_images)
 
             space_converter = img_batch_to_space(space)
             in_space_destinations = walk_in_field(
@@ -228,13 +226,18 @@ class StableDiffuserWithBinaryFeedback:
                 n_steps=self.walk_steps,
                 **kwargs
             )
+            with torch.enable_grad():
+                noise_destinations = self.optimize_noise(
+                    noise_cond.detach(),
+                    in_space_destinations.detach(),
+                    space_converter,
+                    norm_to_walk=(noise_cond- noise_uncond).norm()*8
+                )
 
-            noise_destinations = self.optimize_noise(
-                noise_cond,
-                in_space_destinations,
-                space_converter,
-                norm_to_walk=(noise_cond- noise_uncond).norm()*8
-            )
+            # cfg_vector = noise_cond - noise_uncond
+            # noise_destinations = noise_cond + self.walk_distance*cfg_vector
+
+            print("guidance norm: ",(noise_cond-noise_destinations).view(self.n_images, -1).norm())
             noise_destinations = noise_destinations.to(z.dtype)
             z = scheduler.step(noise_destinations, t, z).prev_sample
 
