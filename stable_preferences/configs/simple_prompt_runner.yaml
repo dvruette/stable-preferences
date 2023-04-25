@@ -7,6 +7,7 @@ n_images: 8
 walk_distance: 12 # in the case of latent_noise and constant_direction and preference_portion 0, this is the cfg scale, i.e. "it walks in the noise space so far into the constant preference direction ignoring the liked disliked"
 walk_steps: 1
 denoising_steps: 20
+# binary_feedback_type: 'prompt'/'image_inversion'/'image_direct'
 
 field: "constant_direction"
 space: "latent_noise"

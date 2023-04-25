@@ -171,8 +171,14 @@ class StableDiffuserWithBinaryFeedback:
             liked_prompts_embds, disliked_prompts_embds = self.initialize_prompts(
                 liked, disliked
             )
-        elif binary_feedback_type == "image":
+        elif binary_feedback_type == "image_inversion":
             raise NotImplementedError("Image feedback is not implemented yet")
+        elif binary_feedback_type == "image_direct":
+            raise NotImplementedError("Image feedback is not implemented yet")
+            # add the images into the kwargs and then use them in the field
+            # this is hacky, but i guess it's ok.
+        else:
+            raise ValueError(f"Binary feedback type {binary_feedback_type} is not supported.")
         cond_prompt_embds, uncond_prompt_embds = self.initialize_prompts(
             [prompt], [""]
         ) # shape: "steps 1 a b"
