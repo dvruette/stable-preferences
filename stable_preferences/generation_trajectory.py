@@ -111,7 +111,6 @@ class StableDiffuserWithBinaryFeedback:
             noise_cond,
             in_space_destinations,
             space_converter,
-            norm_to_walk=torch.tensor(4.0),
         ):
         """
         Optimize the noise to get to the destination in the space.
@@ -119,32 +118,35 @@ class StableDiffuserWithBinaryFeedback:
 
         current_points = noise_cond.clone().detach().requires_grad_(True)
 
-        print("Optimizing, the shapes: ", current_points.shape, space_converter(current_points).shape, in_space_destinations.shape)
-
-        loss_t = torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations)
+        loss_t = torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')
         loss_t.backward()
         grad_norm = current_points.grad.norm()
-        lr = 3000 # torch.tensor(1/3) * norm_to_walk / max(grad_norm,1.0)
+        lr = 0.3 # torch.tensor(1/3) * norm_to_walk / max(grad_norm,1.0)
 
-        optimizer = optim.SGD([current_points], lr=lr)
         convergence_threshold = 1e-5
         max_iterations = 100
 
         iterations_used=0
-        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations)} in {iterations_used} many iterations")
+        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
         for iteration in range(max_iterations):
-            optimizer.zero_grad()
+            current_points.grad.zero_()
 
             current_points_in_space = space_converter(current_points)
-            loss = torch.nn.functional.mse_loss(current_points_in_space, in_space_destinations)
+            loss = torch.nn.functional.mse_loss(current_points_in_space, in_space_destinations, reduction='sum')
             if loss.item() < convergence_threshold:
                 print(f"Converged after {iteration} iterations")
                 break
             loss.backward()
-            optimizer.step()
-            iterations_used+=1
-        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations)} in {iterations_used} many iterations")
+
+            # Full gradient descent update
+            with torch.no_grad():
+                current_points -= lr * current_points.grad
+
+            iterations_used += 1
+
+        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
         return current_points.clone().detach().requires_grad_(False)
+
         
     @torch.no_grad()
     def generate(
@@ -231,13 +233,12 @@ class StableDiffuserWithBinaryFeedback:
                     noise_cond.detach(),
                     in_space_destinations.detach(),
                     space_converter,
-                    norm_to_walk=(noise_cond- noise_uncond).norm()*8
                 )
 
             # cfg_vector = noise_cond - noise_uncond
             # noise_destinations = noise_cond + self.walk_distance*cfg_vector
 
-            print("guidance norm: ",(noise_cond-noise_destinations).view(self.n_images, -1).norm())
+            print("guidance norm: ",(noise_cond-noise_destinations).view(self.n_images, -1).norm(dim=1))
             noise_destinations = noise_destinations.to(z.dtype)
             z = scheduler.step(noise_destinations, t, z).prev_sample
 
