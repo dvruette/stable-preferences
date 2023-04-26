@@ -1,28 +1,32 @@
 hydra:
   job:
     chdir: true
-model_id: stabilityai/stable-diffusion-2-1-base
-output_dir: /cluster/home/efedele/stable-preferences/weights/textual_inversion
-device: "auto"
+#model_id: stabilityai/stable-diffusion-2-1-base
+model_id: "runwayml/stable-diffusion-v1-5"
+output_dir: textual_inversion
+device: "cuda:0"
 report_to: "wandb"
 data:
-  human_preference_dataset_path: /Users/dimitri/Git/stable-diffusion/align_sd/dataset
-  training_example_id: 5
+  human_preference_dataset_path: ../align_sd/dataset
+  training_example_id: 3
   center_crop: false
   repeats: 100
   resolution: 512
 training:
   embedding_type: "naive"
+  max_length: 77
   seed: 42
   lr: 5e-4
   lr_scheduler: "constant"
   lr_warmup_steps: 0
   steps: 5000
   batch_size: 4
+  eval_batch_size: 1
   gradient_accumulation_steps: 4
   save_steps: 10
+  eval_steps: 10
   adam_beta1: 0.9
   adam_beta2: 0.999
-  adam_weight_decay: 1e-2
-  adam_epsilon: 1e-08
+  adam_weight_decay: 0.01
+  adam_epsilon: 1e-8
   dataloader_num_workers: 0
