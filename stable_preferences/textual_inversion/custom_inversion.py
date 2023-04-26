@@ -265,7 +265,8 @@ def main(ctx: DictConfig):
         guidance_scale=8,
     )
 
-    eval_latents = torch.randn(ctx.training.eval_batch_size, unet.in_channels, 64, 64, dtype=weight_dtype)
+    latent_res = unet.config.sample_size
+    eval_latents = noise_scheduler.init_noise_sigma * torch.randn(ctx.training.eval_batch_size, unet.in_channels, latent_res, latent_res, dtype=weight_dtype)
     # eval_imgs = generate_fn(eval_latents.to(device), learned_embeds.to(device))
     eval_imgs = generate_fn(eval_latents.to(device), prompt_embeds.to(device))
     
