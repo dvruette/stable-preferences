@@ -23,6 +23,7 @@ class HumanPreferenceScore:
         params = torch.load(model_path, map_location=device)["state_dict"]
         self.model.load_state_dict(params)
 
+    @torch.no_grad()
     def infer_score(self, image_paths, prompt):
         images = [
             self.preprocess(Image.open(image_path)).unsqueeze(0).to(self.device)
@@ -43,13 +44,14 @@ class HumanPreferenceScore:
         return hps
 
 
-# Example usage
-hps_obj = HumanPreferenceScore(
-    "/Users/lukas/Desktop/projects/diffusion/align_sd/weights/hpc.pt"
-)
-img_path_1 = "/Users/lukas/Desktop/projects/diffusion/align_sd/assets/vis1.png"
-img_path_2 = "/Users/lukas/Desktop/projects/diffusion/align_sd/assets/vis2.png"
-image_paths = [img_path_1, img_path_2]
-prompt = "your prompt here"
-hps = hps_obj.infer(image_paths, prompt)
-print(hps)
+if __name__ == "__main__":
+    # Example usage
+    hps_obj = HumanPreferenceScore(
+        "/Users/lukas/Desktop/projects/diffusion/align_sd/weights/hpc.pt"
+    )
+    img_path_1 = "/Users/lukas/Desktop/projects/diffusion/align_sd/assets/vis1.png"
+    img_path_2 = "/Users/lukas/Desktop/projects/diffusion/align_sd/assets/vis2.png"
+    image_paths = [img_path_1, img_path_2]
+    prompt = "your prompt here"
+    hps = hps_obj.infer(image_paths, prompt)
+    print(hps)
