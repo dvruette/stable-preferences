@@ -1,30 +1,42 @@
-import hydra
-from omegaconf import DictConfig
 import os
 from datetime import date
-from generation_trajectory import StableDiffuserWithBinaryFeedback
+
+import hydra
+from omegaconf import DictConfig
+import torch
+
+from stable_preferences.generation_trajectory import StableDiffuserWithBinaryFeedback
+from stable_preferences.utils import get_free_gpu
 
 
 @hydra.main(config_path="configs", config_name="simple_prompt_runner", version_base=None)
 def main(ctx: DictConfig):
 
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = get_free_gpu() if torch.cuda.is_available() else device
+    print(f"Using device: {device}")
+
+    dtype = torch.float16 if str(device) != 'cpu' else torch.float32
+    print(f"Using dtype: {dtype}")
+
     generator = StableDiffuserWithBinaryFeedback(
-        ctx.model_version,
-        ctx.unet_max_chunk_size,
-        ctx.n_images,
-        ctx.walk_distance,
-        ctx.walk_steps,
-        ctx.denoising_steps,
-    )
+        stable_diffusion_version=ctx.model_version,
+        unet_max_chunk_size=ctx.unet_max_chunk_size,
+        torch_dtype=dtype,
+    ).to(device)
 
     trajectory = generator.generate(
-        ctx.prompt,
-        ctx.liked_prompts,
-        ctx.disliked_prompts,
+        prompt=ctx.prompt,
+        liked=ctx.liked_prompts,
+        disliked=ctx.disliked_prompts,
         field=ctx.field,
         space=ctx.space,
         binary_feedback_type='prompt',
         seed=ctx.seed,
+        n_images=ctx.n_images,
+        walk_distance=ctx.walk_distance,
+        walk_steps=ctx.walk_steps,
+        denoising_steps=ctx.denoising_steps,
         **ctx.additional_args,
     )
 

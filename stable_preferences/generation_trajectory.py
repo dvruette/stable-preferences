@@ -1,28 +1,22 @@
 from typing import Literal, List
+
 import torch
+import torch.nn as nn
+from PIL import Image
 from einops import repeat, rearrange, pack, unpack
 from tqdm import tqdm
-from spaces import img_batch_to_space
-from fields import walk_in_field
-from scipy.optimize import minimize
-import torch.optim as optim
-from stable_preferences.utils import get_free_gpu
 from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler
 
+from stable_preferences.spaces import img_batch_to_space
+from stable_preferences.fields import walk_in_field
 
 
-
-
-class StableDiffuserWithBinaryFeedback:
+class StableDiffuserWithBinaryFeedback(nn.Module):
 
     def __init__(self, 
             stable_diffusion_version: str = "1.5",
             unet_max_chunk_size=8,
-            n_images=1,
-            walk_distance=8,
-            walk_steps=1,
-            denoising_steps=20,
-            show_progress=True,
+            torch_dtype=torch.float32,
         ):
         if stable_diffusion_version == "1.5":
             model_name = "runwayml/stable-diffusion-v1-5"
@@ -30,34 +24,29 @@ class StableDiffuserWithBinaryFeedback:
             model_name = "stabilityai/stable-diffusion-2-1"
         else:
             raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version bust be either '1.5' or '2.1'")
-        
-        self.device = "mps" if torch.backends.mps.is_available() else "cpu"
-        self.device = get_free_gpu() if torch.cuda.is_available() else self.device
 
-        print(f"Using device: {self.device}")
-        dtype = torch.float16 if str(self.device)!='cpu' else torch.float32
-        print(f"Using dtype: {dtype}")
-        torch.set_default_dtype(dtype) # bad style to change global default, but this is how it is done in the original code
+        scheduler = DPMSolverSinglestepScheduler.from_pretrained(model_name, subfolder="scheduler")
+        pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype)
 
-        self.scheduler = DPMSolverSinglestepScheduler.from_pretrained(model_name, subfolder="scheduler")
-        self.diffusion_pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=self.scheduler, torch_dtype=dtype).to(self.device)
+        self.unet = pipe.unet
+        self.vae = pipe.vae
+        self.text_encoder = pipe.text_encoder
+        self.tokenizer = pipe.tokenizer
+        self.scheduler = pipe.scheduler
 
-        print(f"Unet: {sum(p.numel() for p in self.diffusion_pipe.unet.parameters()) / 1e6:.0f}M")
-        print(f"VAE: {sum(p.numel() for p in self.diffusion_pipe.vae.parameters()) / 1e6:.0f}M")
-        print(f"TextEncoder: {sum(p.numel() for p in self.diffusion_pipe.text_encoder.parameters()) / 1e6:.0f}M")
+        print(f"Unet: {sum(p.numel() for p in self.unet.parameters()) / 1e6:.0f}M")
+        print(f"VAE: {sum(p.numel() for p in self.vae.parameters()) / 1e6:.0f}M")
+        print(f"TextEncoder: {sum(p.numel() for p in self.text_encoder.parameters()) / 1e6:.0f}M")
 
         self.unet_max_chunk_size = unet_max_chunk_size
-        self.n_images = n_images
-        self.walk_distance = walk_distance
-        self.walk_steps = walk_steps
-        self.denoising_steps = denoising_steps
-        self.show_progress = show_progress
+        self.dtype = torch_dtype
         
 
     def initialize_prompts(
         self,
         liked_prompts: List[str],
         disliked_prompts: List[str],
+        num_steps: int,
     ):
         """
         Initialize prompt feedback for the trajectory generation.
@@ -66,28 +55,25 @@ class StableDiffuserWithBinaryFeedback:
         """
 
         if len(liked_prompts) == 0 and len(disliked_prompts) == 0:
-            return torch.zeros((self.denoising_steps, 0, 0, 0)), torch.zeros((self.denoising_steps, 0, 0, 0))
+            return torch.zeros((num_steps, 0, 0, 0)), torch.zeros((num_steps, 0, 0, 0))
 
-        text_encoder = self.diffusion_pipe.text_encoder
-        tokenizer = self.diffusion_pipe.tokenizer
-
-        prompt_tokens = tokenizer(
+        prompt_tokens = self.tokenizer(
             liked_prompts + disliked_prompts,
             return_tensors="pt",
             padding=True,
             truncation=True,
-        ).to(self.device)
-        prompt_embd = text_encoder(**prompt_tokens).last_hidden_state
+        ).to(self.text_encoder.device)
+
+        prompt_embd = self.text_encoder(**prompt_tokens).last_hidden_state
         liked_prompts_embd = prompt_embd[: len(liked_prompts)]
         disliked_prompts_embd = prompt_embd[len(liked_prompts) :]
-        liked_prompts_embds = repeat(liked_prompts_embd, 'prompts a b -> steps prompts a b', steps=self.denoising_steps)
-        disliked_prompts_embds = repeat(disliked_prompts_embd, 'prompts a b -> steps prompts a b', steps=self.denoising_steps)
+        liked_prompts_embds = repeat(liked_prompts_embd, 'prompts a b -> steps prompts a b', steps=num_steps)
+        disliked_prompts_embds = repeat(disliked_prompts_embd, 'prompts a b -> steps prompts a b', steps=num_steps)
 
         return liked_prompts_embds, disliked_prompts_embds
 
     def chunked_unet_forward(
         self,
-        unet,
         z_all,
         t,
         batched_prompt_embd,
@@ -100,7 +86,7 @@ class StableDiffuserWithBinaryFeedback:
         batched_prompt_embd_chunks = torch.chunk(batched_prompt_embd, n_chunks, dim=0)
         unet_out_all = []
         for z_all_chunk, batched_prompt_embd_chunk in zip(z_all_chunks, batched_prompt_embd_chunks):
-            unet_out = unet(z_all_chunk, t, batched_prompt_embd_chunk).sample     
+            unet_out = self.unet(z_all_chunk, t, batched_prompt_embd_chunk).sample     
             unet_out = unet_out.to(torch.float32)
             unet_out_all.append(unet_out)
         unet_out_all,_ = pack(unet_out_all, '* a b c')
@@ -151,13 +137,18 @@ class StableDiffuserWithBinaryFeedback:
     @torch.no_grad()
     def generate(
         self,
-        prompt="a photo of an astronaut riding a horse on mars",
-        liked=[],
-        disliked=[],
+        prompt: str = "a photo of an astronaut riding a horse on mars",
+        liked: List[str] = [],
+        disliked: List[str] = [],
         field: Literal["constant_direction"] = "constant_direction",
         space: Literal["latent_noise"] = "latent_noise",
         binary_feedback_type: Literal["prompt", "image"] = "prompt",
-        seed=42,
+        seed: int = 42,
+        n_images: int = 1,
+        walk_distance: float = 8.0,
+        walk_steps: int = 1,
+        denoising_steps: int = 20,
+        show_progress: bool = True,
         **kwargs
     ):
         """
@@ -179,44 +170,39 @@ class StableDiffuserWithBinaryFeedback:
             # this is hacky, but i guess it's ok.
         else:
             raise ValueError(f"Binary feedback type {binary_feedback_type} is not supported.")
-        cond_prompt_embds, uncond_prompt_embds = self.initialize_prompts(
-            [prompt], [""]
-        ) # shape: "steps 1 a b"
+        cond_prompt_embds, uncond_prompt_embds = self.initialize_prompts([prompt], [""], denoising_steps) # shape: "steps 1 a b"
         cond_prompt_embds = rearrange(cond_prompt_embds, "steps 1 a b -> steps a b")
         uncond_prompt_embds = rearrange(uncond_prompt_embds, "steps 1 a b -> steps a b")
 
-        scheduler = self.diffusion_pipe.scheduler
-        unet = self.diffusion_pipe.unet
+        self.scheduler.set_timesteps(denoising_steps, device=self.device)
 
-        scheduler.set_timesteps(self.denoising_steps, device=self.device)
+        iterator = self.scheduler.timesteps
+        if show_progress:
+            iterator = tqdm(iterator)
 
-        iterator = scheduler.timesteps
-        if self.show_progress:
-            iterator = tqdm(scheduler.timesteps)
         traj = []
         norms = []
-        z = torch.randn(self.n_images, 4, 64, 64, device=self.device)
-        z = z * scheduler.init_noise_sigma
-        for iteration, t in enumerate(iterator):
-            z_single = scheduler.scale_model_input(z, t)
+        z = torch.randn(n_images, 4, 64, 64, device=self.device)
+        z = z * self.scheduler.init_noise_sigma
+        for i, t in enumerate(iterator):
+            z_single = self.scheduler.scale_model_input(z, t)
             z_all = repeat(z_single, "batch a b c -> (batch prompts) a b c", prompts=2 + len(liked) + len(disliked)) # we generate the next z for all prompts and then combine
 
-            liked_prompts_embd = liked_prompts_embds[iteration]
-            disliked_prompts_embd = disliked_prompts_embds[iteration]
-            cond_prompt_embd = cond_prompt_embds[iteration]
-            uncond_prompt_embd = uncond_prompt_embds[iteration]
+            liked_prompts_embd = liked_prompts_embds[i]
+            disliked_prompts_embd = disliked_prompts_embds[i]
+            cond_prompt_embd = cond_prompt_embds[i]
+            uncond_prompt_embd = uncond_prompt_embds[i]
             prompt_embd, ps = pack(
                 [a for a in [cond_prompt_embd, uncond_prompt_embd, liked_prompts_embd, disliked_prompts_embd] if 0 not in a.shape], # avoid empty concatenation throwing errors 
                 '* a b')
-            batched_prompt_embd = repeat(prompt_embd, 'prompts a b -> (batch prompts) a b', batch=self.n_images)
+            batched_prompt_embd = repeat(prompt_embd, 'prompts a b -> (batch prompts) a b', batch=n_images)
             
             unet_out = self.chunked_unet_forward(
-                unet,
                 z_all,
                 t,
                 batched_prompt_embd,
             )
-            unet_out = rearrange(unet_out, "(batch prompts) a b c -> batch prompts a b c", batch=self.n_images)
+            unet_out = rearrange(unet_out, "(batch prompts) a b c -> batch prompts a b c", batch=n_images)
             noise_cond, noise_uncond, noise_liked, noise_disliked = unpack(
                 unet_out,
                 [(),(),(len(liked),), (len(disliked),)],
@@ -229,9 +215,9 @@ class StableDiffuserWithBinaryFeedback:
                 space_converter(noise_cond),
                 space_converter(noise_liked),
                 space_converter(noise_disliked),
-                field,
-                self.walk_distance,
-                n_steps=self.walk_steps,
+                field_type=field,
+                walk_distance=walk_distance,
+                n_steps=walk_steps,
                 **kwargs
             )
             with torch.enable_grad():
@@ -242,14 +228,38 @@ class StableDiffuserWithBinaryFeedback:
                 )
 
             # cfg_vector = noise_cond - noise_uncond
-            # noise_destinations = noise_cond + self.walk_distance*cfg_vector
+            # noise_destinations = noise_cond + walk_distance*cfg_vector
 
-            print("guidance norm: ",(noise_cond-noise_destinations).view(self.n_images, -1).norm(dim=1))
+            print("guidance norm: ",(noise_cond-noise_destinations).view(n_images, -1).norm(dim=1))
             noise_destinations = noise_destinations.to(z.dtype)
-            z = scheduler.step(noise_destinations, t, z).prev_sample
+            z = self.scheduler.step(noise_destinations, t, z).prev_sample
 
-            y = self.diffusion_pipe.decode_latents(z)
-            piled = self.diffusion_pipe.numpy_to_pil(y)
+            y = self.decode_latents(z)
+            piled = self.numpy_to_pil(y)
             traj.append(piled)
 
         return traj
+    
+    def decode_latents(self, latents):
+        latents = 1 / self.vae.config.scaling_factor * latents
+        image = self.vae.decode(latents).sample
+        image = (image / 2 + 0.5).clamp(0, 1)
+        # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
+        image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+        return image
+    
+    @staticmethod
+    def numpy_to_pil(images):
+        """
+        Convert a numpy image or a batch of images to a PIL image.
+        """
+        if images.ndim == 3:
+            images = images[None, ...]
+        images = (images * 255).round().astype("uint8")
+        if images.shape[-1] == 1:
+            # special case for grayscale (single channel) images
+            pil_images = [Image.fromarray(image.squeeze(), mode="L") for image in images]
+        else:
+            pil_images = [Image.fromarray(image) for image in images]
+
+        return pil_images
