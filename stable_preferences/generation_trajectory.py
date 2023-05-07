@@ -8,6 +8,7 @@ from scipy.optimize import minimize
 import torch.optim as optim
 from stable_preferences.utils import get_free_gpu
 from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler
+from math import ceil
 
 
 
@@ -29,7 +30,7 @@ class StableDiffuserWithBinaryFeedback:
         elif stable_diffusion_version == "2.1":
             model_name = "stabilityai/stable-diffusion-2-1"
         else:
-            raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version bust be either '1.5' or '2.1'")
+            raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version must be either '1.5' or '2.1'")
         
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.device = get_free_gpu() if torch.cuda.is_available() else self.device
@@ -71,13 +72,25 @@ class StableDiffuserWithBinaryFeedback:
         text_encoder = self.diffusion_pipe.text_encoder
         tokenizer = self.diffusion_pipe.tokenizer
 
-        prompt_tokens = tokenizer(
+        # importtant! this is how the prompt is padded: always to 77 tokens. Was wrong in the original code
+        text_inputs = tokenizer(
             liked_prompts + disliked_prompts,
+            padding="max_length", max_length=tokenizer.model_max_length, truncation=True,
             return_tensors="pt",
-            padding=True,
-            truncation=True,
         ).to(self.device)
-        prompt_embd = text_encoder(**prompt_tokens).last_hidden_state
+
+        text_input_ids = text_inputs.input_ids
+
+        # there apparently is no attention mask used, so we can just comment this out
+        # if hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask:
+        #     attention_mask = text_inputs.attention_mask.to(self.device)
+        # else:
+        #     print("No attention mask")
+        #     attention_mask = None
+
+        prompt_embd = text_encoder(text_input_ids, attention_mask=None)[0] # equivalent to text_encoder(**prompt_tokens)[0]
+        # important, we need to have the full padded length, because stable diffusion has attention on the padding tokens
+        assert(prompt_embd.shape[1] == 77), f"Prompt shape is {prompt_embd.shape}, but should be [smth,77,768]"
         liked_prompts_embd = prompt_embd[: len(liked_prompts)]
         disliked_prompts_embd = prompt_embd[len(liked_prompts) :]
         liked_prompts_embds = repeat(liked_prompts_embd, 'prompts a b -> steps prompts a b', steps=self.denoising_steps)
@@ -95,15 +108,17 @@ class StableDiffuserWithBinaryFeedback:
         """
         Forward pass for the diffusion model, chunked to avoid memory issues.
         """
-        n_chunks = z_all.shape[0] // self.unet_max_chunk_size
+        n_chunks = ceil(z_all.shape[0] / self.unet_max_chunk_size)
         z_all_chunks = torch.chunk(z_all, n_chunks, dim=0)
         batched_prompt_embd_chunks = torch.chunk(batched_prompt_embd, n_chunks, dim=0)
         unet_out_all = []
+        print("Chunked unet forward pass")
         for z_all_chunk, batched_prompt_embd_chunk in zip(z_all_chunks, batched_prompt_embd_chunks):
             unet_out = unet(z_all_chunk, t, batched_prompt_embd_chunk).sample     
             unet_out = unet_out.to(torch.float32)
             unet_out_all.append(unet_out)
         unet_out_all,_ = pack(unet_out_all, '* a b c')
+        print("Chunked unet forward pass done")
         return unet_out_all
 
     def optimize_noise(
