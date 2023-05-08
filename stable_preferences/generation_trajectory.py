@@ -8,7 +8,6 @@ from einops import repeat, rearrange, pack, unpack
 from tqdm import tqdm
 from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler
 
-from stable_preferences.spaces import img_batch_to_space
 from stable_preferences.fields import walk_in_field
 
 
@@ -111,7 +110,6 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
             self,
             noise_cond,
             in_space_destinations,
-            space_converter,
         ):
         """
         Optimize the noise to get to the destination in the space.
@@ -119,7 +117,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
 
         current_points = noise_cond.clone().detach().requires_grad_(True)
 
-        loss_t = torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')
+        loss_t = torch.nn.functional.mse_loss(current_points, in_space_destinations, reduction='sum')
         loss_t.backward()
         grad_norm = current_points.grad.norm()
         lr = 0.3 # torch.tensor(1/3) * norm_to_walk / max(grad_norm,1.0)
@@ -128,11 +126,11 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         max_iterations = 100
 
         iterations_used=0
-        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')}")
+        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(current_points, in_space_destinations, reduction='sum')}")
         for iteration in range(max_iterations):
             current_points.grad.zero_()
 
-            current_points_in_space = space_converter(current_points)
+            current_points_in_space = current_points
             loss = torch.nn.functional.mse_loss(current_points_in_space, in_space_destinations, reduction='sum')
             if loss.item() < convergence_threshold:
                 print(f"Converged after {iteration} iterations")
@@ -145,7 +143,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
 
             iterations_used += 1
 
-        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} iterations")
+        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(current_points, in_space_destinations, reduction='sum')} in {iterations_used} iterations")
         return current_points.clone().detach().requires_grad_(False)
 
         
@@ -156,7 +154,6 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         liked: List[str] = [],
         disliked: List[str] = [],
         field: Literal["constant_direction"] = "constant_direction",
-        space: Literal["latent_noise"] = "latent_noise",
         binary_feedback_type: Literal["prompt", "image"] = "prompt",
         seed: int = 42,
         n_images: int = 1,
@@ -224,12 +221,11 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
                 'batch * a b c'
             )
 
-            space_converter = img_batch_to_space(space)
             in_space_destinations = walk_in_field(
-                space_converter(noise_uncond),
-                space_converter(noise_cond),
-                space_converter(noise_liked),
-                space_converter(noise_disliked),
+                latent_uncond_batch=noise_uncond,
+                latent_cond_batch=noise_cond,
+                field_points_pos=noise_liked,
+                field_points_neg=noise_disliked,
                 field_type=field,
                 walk_distance=walk_distance,
                 n_steps=walk_steps,
@@ -239,7 +235,6 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
                 noise_destinations = self.optimize_noise(
                     noise_cond.detach(),
                     in_space_destinations.detach(),
-                    space_converter,
                 )
 
             # cfg_vector = noise_cond - noise_uncond

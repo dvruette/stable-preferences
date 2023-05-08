@@ -16,7 +16,7 @@ def main(ctx: DictConfig):
     device = get_free_gpu() if torch.cuda.is_available() else device
     print(f"Using device: {device}")
 
-    dtype = torch.float16 if str(device) != 'cpu' else torch.float32
+    dtype = torch.float16 if str(device) != "cpu" else torch.float32
     print(f"Using dtype: {dtype}")
 
     generator = StableDiffuserWithBinaryFeedback(
@@ -30,8 +30,7 @@ def main(ctx: DictConfig):
         liked=list(ctx.liked_prompts),
         disliked=list(ctx.disliked_prompts),
         field=ctx.field,
-        space=ctx.space,
-        binary_feedback_type='prompt',
+        binary_feedback_type=ctx.binary_feedback_type,
         seed=ctx.seed,
         n_images=ctx.n_images,
         walk_distance=ctx.walk_distance,

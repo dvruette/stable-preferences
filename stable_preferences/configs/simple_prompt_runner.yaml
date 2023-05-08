@@ -16,10 +16,9 @@ disliked_prompts:
     - "longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"
     # - "asphalt road"
     # - "a birds eye view of a city"
-binary_feedback_type: prompt # or 'image_inversion' or 'image_direct'
+binary_feedback_type: prompt # or "image_inversion" or "image_direct"
 
 field: "constant_direction"
-space: "latent_noise"
 seed: 4259
 additional_args: # additional parameters specifically for the field and space
     clip_preference_vec: false
