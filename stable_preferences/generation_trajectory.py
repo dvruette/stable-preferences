@@ -105,47 +105,6 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
             unet_out_all.append(unet_out)
         unet_out_all,_ = pack(unet_out_all, '* a b c')
         return unet_out_all
-
-    def optimize_noise(
-            self,
-            noise_cond,
-            in_space_destinations,
-        ):
-        """
-        Optimize the noise to get to the destination in the space.
-        """
-
-        current_points = noise_cond.clone().detach().requires_grad_(True)
-
-        loss_t = torch.nn.functional.mse_loss(current_points, in_space_destinations, reduction='sum')
-        loss_t.backward()
-        grad_norm = current_points.grad.norm()
-        lr = 0.3 # torch.tensor(1/3) * norm_to_walk / max(grad_norm,1.0)
-
-        convergence_threshold = 1e-5
-        max_iterations = 100
-
-        iterations_used=0
-        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(current_points, in_space_destinations, reduction='sum')}")
-        for iteration in range(max_iterations):
-            current_points.grad.zero_()
-
-            current_points_in_space = current_points
-            loss = torch.nn.functional.mse_loss(current_points_in_space, in_space_destinations, reduction='sum')
-            if loss.item() < convergence_threshold:
-                print(f"Converged after {iteration} iterations")
-                break
-            loss.backward()
-
-            # Full gradient descent update
-            with torch.no_grad():
-                current_points -= lr * current_points.grad
-
-            iterations_used += 1
-
-        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(current_points, in_space_destinations, reduction='sum')} in {iterations_used} iterations")
-        return current_points.clone().detach().requires_grad_(False)
-
         
     @torch.no_grad()
     def generate(
@@ -221,7 +180,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
                 'batch * a b c'
             )
 
-            in_space_destinations = walk_in_field(
+            noise_destinations = walk_in_field(
                 latent_uncond_batch=noise_uncond,
                 latent_cond_batch=noise_cond,
                 field_points_pos=noise_liked,
@@ -229,16 +188,8 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
                 field_type=field,
                 walk_distance=walk_distance,
                 n_steps=walk_steps,
-                **kwargs
+                **kwargs,
             )
-            with torch.enable_grad():
-                noise_destinations = self.optimize_noise(
-                    noise_cond.detach(),
-                    in_space_destinations.detach(),
-                )
-
-            # cfg_vector = noise_cond - noise_uncond
-            # noise_destinations = noise_cond + walk_distance*cfg_vector
 
             print("guidance norm: ",(noise_cond-noise_destinations).view(n_images, -1).norm(dim=1))
             noise_destinations = noise_destinations.to(z.dtype)
