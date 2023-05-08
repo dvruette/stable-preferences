@@ -18,12 +18,14 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
             unet_max_chunk_size=8,
             torch_dtype=torch.float32,
         ):
+        super().__init__()
+
         if stable_diffusion_version == "1.5":
             model_name = "runwayml/stable-diffusion-v1-5"
         elif stable_diffusion_version == "2.1":
             model_name = "stabilityai/stable-diffusion-2-1"
         else:
-            raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version bust be either '1.5' or '2.1'")
+            raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version must be either '1.5' or '2.1'")
 
         scheduler = DPMSolverSinglestepScheduler.from_pretrained(model_name, subfolder="scheduler")
         pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype)
@@ -40,7 +42,10 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
 
         self.unet_max_chunk_size = unet_max_chunk_size
         self.dtype = torch_dtype
-        
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
     def initialize_prompts(
         self,
@@ -81,7 +86,11 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         """
         Forward pass for the diffusion model, chunked to avoid memory issues.
         """
-        n_chunks = z_all.shape[0] // self.unet_max_chunk_size
+        if z_all.shape[0] >= self.unet_max_chunk_size:
+            n_chunks = z_all.shape[0] // self.unet_max_chunk_size
+        else:
+            n_chunks = 1
+
         z_all_chunks = torch.chunk(z_all, n_chunks, dim=0)
         batched_prompt_embd_chunks = torch.chunk(batched_prompt_embd, n_chunks, dim=0)
         unet_out_all = []
@@ -113,7 +122,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         max_iterations = 100
 
         iterations_used=0
-        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
+        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')}")
         for iteration in range(max_iterations):
             current_points.grad.zero_()
 
@@ -130,7 +139,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
 
             iterations_used += 1
 
-        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
+        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} iterations")
         return current_points.clone().detach().requires_grad_(False)
 
         
@@ -160,7 +169,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
 
         if binary_feedback_type == "prompt":
             liked_prompts_embds, disliked_prompts_embds = self.initialize_prompts(
-                liked, disliked
+                liked, disliked, denoising_steps
             )
         elif binary_feedback_type == "image_inversion":
             raise NotImplementedError("Image feedback is not implemented yet")
@@ -182,7 +191,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
 
         traj = []
         norms = []
-        z = torch.randn(n_images, 4, 64, 64, device=self.device)
+        z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
         z = z * self.scheduler.init_noise_sigma
         for i, t in enumerate(iterator):
             z_single = self.scheduler.scale_model_input(z, t)

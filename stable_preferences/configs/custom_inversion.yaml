@@ -1,9 +1,9 @@
 hydra:
   job:
     chdir: true
-#model_id: stabilityai/stable-diffusion-2-1-base
-model_id: "runwayml/stable-diffusion-v1-5"
-output_dir: textual_inversion
+model_id: stabilityai/stable-diffusion-2-1-base
+# model_id: "runwayml/stable-diffusion-v1-5"
+output_dir: "."
 device: "cuda:0"
 report_to: "wandb"
 data:
@@ -13,20 +13,22 @@ data:
   repeats: 100
   resolution: 512
 training:
-  embedding_type: "naive"
+  # embedding_type: "constant"
+  embedding_type: "cumulative_decay"
+  embedding_decay: 0.99
   max_length: 77
   seed: 42
-  lr: 5e-4
+  lr: 1e-5
   lr_scheduler: "constant"
   lr_warmup_steps: 0
   steps: 5000
   batch_size: 4
-  eval_batch_size: 1
+  eval_batch_size: 2
   gradient_accumulation_steps: 4
-  save_steps: 10
+  save_steps: 100
   eval_steps: 10
   adam_beta1: 0.9
   adam_beta2: 0.999
-  adam_weight_decay: 0.01
+  adam_weight_decay: 0.05
   adam_epsilon: 1e-8
   dataloader_num_workers: 0

@@ -12,11 +12,13 @@ from stable_preferences.utils import get_free_gpu
 @hydra.main(config_path="configs", config_name="simple_prompt_runner", version_base=None)
 def main(ctx: DictConfig):
 
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    device = get_free_gpu() if torch.cuda.is_available() else device
+    # device = "mps" if torch.backends.mps.is_available() else "cpu"
+    # device = get_free_gpu() if torch.cuda.is_available() else device
+    device = "cuda:2"
     print(f"Using device: {device}")
 
     dtype = torch.float16 if str(device) != 'cpu' else torch.float32
+    # dtype = torch.float32
     print(f"Using dtype: {dtype}")
 
     generator = StableDiffuserWithBinaryFeedback(

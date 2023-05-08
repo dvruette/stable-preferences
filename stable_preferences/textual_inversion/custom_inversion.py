@@ -22,6 +22,18 @@ from accelerate import Accelerator
 from stable_preferences.human_preference_dataset.utils import HumanPreferenceDatasetReader
 from stable_preferences.utils import get_free_gpu
 
+def torch_batched_ema(x: torch.FloatTensor, beta=0.99):
+    """Computes the exponential moving average of a tensor along the second dimension."""
+    assert x.dim() <= 2
+    out = []
+    for i in range(x.shape[0]):
+        if i == 0:
+            out.append((1 - beta) * x[i])
+        else:
+            out.append(beta * out[-1] + (1 - beta) * x[i])
+    return torch.stack(out, dim=0)
+
+
 @torch.no_grad()
 def generate_samples_from_latents(
     latents: torch.FloatTensor,
@@ -49,7 +61,11 @@ def generate_samples_from_latents(
         max_length=tokenizer.model_max_length,
         return_tensors="pt",
     ).to(latents.device)
-    uncond_embeds = text_encoder(**uncond_tokens).last_hidden_state
+    if hasattr(text_encoder, "use_attention_mask") and text_encoder.use_attention_mask:
+        attention_mask = uncond_tokens["attention_mask"]
+    else:
+        attention_mask = None
+    uncond_embeds = text_encoder(input_ids=uncond_tokens["input_ids"], attention_mask=attention_mask).last_hidden_state
     uncond_embeds = uncond_embeds.expand(latents.shape[0], -1, -1)
     
     # Prepare timesteps
@@ -85,9 +101,7 @@ def generate_samples_from_latents(
 
 
 class TextualInversionDataset(Dataset):
-    """Class to create a dataset for textual inversion.
-    
-    """
+    """Class to create a dataset for textual inversion."""
     def __init__(
         self,
         images,
@@ -158,6 +172,7 @@ def main(ctx: DictConfig):
         
     dtype = "fp16" if torch.cuda.is_available() else "no"
     weight_dtype = torch.float16 if dtype == "fp16" else torch.float32
+    weight_dtype = torch.float32
     
     accelerator = Accelerator(
         gradient_accumulation_steps=ctx.training.gradient_accumulation_steps,
@@ -170,10 +185,11 @@ def main(ctx: DictConfig):
     
     # Load stable diffusion model
     noise_scheduler = DDPMScheduler.from_pretrained(ctx.model_id, subfolder="scheduler", torch_dtype=weight_dtype)
-    tokenizer = CLIPTokenizer.from_pretrained(ctx.model_id, subfolder="tokenizer", torch_dtype=weight_dtype)
-    text_encoder = CLIPTextModel.from_pretrained(ctx.model_id, subfolder="text_encoder", torch_dtype=weight_dtype)
-    vae = AutoencoderKL.from_pretrained(ctx.model_id, subfolder="vae", torch_dtype=weight_dtype)
-    unet = UNet2DConditionModel.from_pretrained(ctx.model_id, subfolder="unet", torch_dtype=weight_dtype)
+    pipe = StableDiffusionPipeline.from_pretrained(ctx.model_id, scheduler=noise_scheduler, torch_dtype=weight_dtype)
+    tokenizer = pipe.tokenizer
+    text_encoder = pipe.text_encoder
+    vae = pipe.vae
+    unet = pipe.unet
 
     # slice_size = unet.config.attention_head_dim // 2
     # unet.set_attention_slice(slice_size)
@@ -196,6 +212,8 @@ def main(ctx: DictConfig):
     image = example["images"][example["human_preference"]]
     prompt = example["prompt"]
 
+    image.save("target_image.png")
+
 
     # Dataset and DataLoaders creation
     train_dataset = TextualInversionDataset(
@@ -209,13 +227,20 @@ def main(ctx: DictConfig):
     )
     
     text_encoder.to(device)
-    prompt_tokens = tokenizer(prompt, padding="max_length", truncation=True, max_length=ctx.training.max_length, return_tensors="pt")
-    prompt_tokens = {k: v.to(device) for k, v in prompt_tokens.items()}
-    prompt_embeds = text_encoder(**prompt_tokens).last_hidden_state
+    prompt_tokens = tokenizer(prompt, padding="max_length", truncation=True, max_length=ctx.training.max_length, return_tensors="pt").to(device)
+    # IMPORTANT: stable diffusion 1.5 was trained without masking the padding tokens
+    if hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask:
+        attention_mask = prompt_tokens["attention_mask"]
+    else:
+        attention_mask = None
+    prompt_embeds = text_encoder(input_ids=prompt_tokens["input_ids"], attention_mask=attention_mask).last_hidden_state
 
     num_timesteps = noise_scheduler.config.num_train_timesteps
-    prompt_embeds = prompt_embeds.expand(num_timesteps, -1, -1)
-    embedding = torch.zeros_like(prompt_embeds)
+    if ctx.training.embedding_type in ["naive", "cumulative", "cumulative_decay"]:
+        prompt_embeds = prompt_embeds.expand(num_timesteps, -1, -1)
+        embedding = torch.zeros_like(prompt_embeds)
+    elif ctx.training.embedding_type == "constant":
+        embedding = prompt_embeds
     embedding = torch.nn.Parameter(embedding, requires_grad=True)
 
     # Initilize the optimizer
@@ -246,13 +271,21 @@ def main(ctx: DictConfig):
     # Keep unet in train mode to enable gradient checkpointing
     unet.eval()
 
-    if ctx.training.embedding_type == "naive":
-        learned_embeds = prompt_embeds + embedding
-    elif ctx.training.embedding_type == "cumulative":
-        learned_embeds = prompt_embeds + embedding.cumsum(dim=0)
-    else:
-        raise ValueError(f"Unknown embedding type {ctx.training.embedding_type}")
-    
+    def update_embedding(embedding: torch.FloatTensor):
+        if ctx.training.embedding_type == "naive":
+            return prompt_embeds + embedding
+        elif ctx.training.embedding_type == "cumulative":
+            return prompt_embeds + embedding.cumsum(dim=0)
+        elif ctx.training.embedding_type == "cumulative_decay":
+            emb = embedding.view(num_timesteps, -1)
+            cum_emb = torch_batched_ema(emb.t(), beta=ctx.training.embedding_decay).t()
+            return prompt_embeds + cum_emb.reshape(embedding.shape)
+        elif ctx.training.embedding_type == "constant":
+            return embedding.expand(num_timesteps, -1, -1)
+        else:
+            raise ValueError(f"Unknown embedding type {ctx.training.embedding_type}")
+
+    learned_embeds = update_embedding(embedding)
 
     generate_fn = functools.partial(
         generate_samples_from_latents,
@@ -267,64 +300,63 @@ def main(ctx: DictConfig):
 
     latent_res = unet.config.sample_size
     eval_latents = noise_scheduler.init_noise_sigma * torch.randn(ctx.training.eval_batch_size, unet.in_channels, latent_res, latent_res, dtype=weight_dtype)
-    # eval_imgs = generate_fn(eval_latents.to(device), learned_embeds.to(device))
-    eval_imgs = generate_fn(eval_latents.to(device), prompt_embeds.to(device))
+    eval_imgs = generate_fn(eval_latents.to(device), learned_embeds.to(device))
+    text_encoder.cpu()
     
     print(f"Saving eval images to {os.path.join(os.getcwd(), ctx.output_dir, 'eval_images')}")
     out_folder = os.path.join(ctx.output_dir, "eval_images")
     os.makedirs(out_folder, exist_ok=True)
     for i, img in enumerate(eval_imgs):
         img.save(os.path.join(out_folder, f"img_0_{i}.png"))
-    
+
     print("***** Running training *****")
     print(f"  Num examples = {len(train_dataset)}")
     prog_bar = tqdm.trange(ctx.training.steps)
     prog_bar.set_description("Steps")
 
     dl = iter(train_dataloader)
-        
+
     for i in range(ctx.training.steps):
-        try:
-            batch = next(dl)
-        except StopIteration:
-            dl = iter(train_dataloader)
-            batch = next(dl)
-        
-        latents = vae.encode(batch["pixel_values"].to(device, dtype=weight_dtype)).latent_dist.sample().detach()
-        latents = latents * vae.config.scaling_factor
-        
-        # sample the noise to add to latents
-        noise = torch.randn_like(latents)
-        bsz = latents.shape[0]
-        # sample a random timestep for each image
-        timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
-        
-        # Add noise to the latents according to noise magnitude at each timestep (forward diffusion process)
-        noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-        
-        # Get text embeddings for conditioning
-        encoder_hidden_states = learned_embeds.gather(0, timesteps.view(bsz, 1, 1).expand(-1, *learned_embeds.shape[1:]))
-        
-        # Predict noise residual
-        model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-        if noise_scheduler.config.prediction_type == "epsilon":
-            target = noise
-        elif noise_scheduler.config.prediction_type == "v_prediction":
-            target = noise_scheduler.get_velocity(latents, noise, timesteps)
-        else:
-            raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
-        
-        loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-        accelerator.backward(loss)
-        
-        optimizer.step()
-        optimizer.zero_grad()
+        for j in range(ctx.training.gradient_accumulation_steps):
+            try:
+                batch = next(dl)
+            except StopIteration:
+                dl = iter(train_dataloader)
+                batch = next(dl)
+            
+            with accelerator.accumulate(embedding):
+                latents = vae.encode(batch["pixel_values"].to(device, dtype=weight_dtype)).latent_dist.sample().detach()
+                latents = latents * vae.config.scaling_factor
+                
+                # sample the noise to add to latents
+                noise = torch.randn_like(latents)
+                bsz = latents.shape[0]
+                # sample a random timestep for each image
+                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
+                
+                # Add noise to the latents according to noise magnitude at each timestep (forward diffusion process)
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                
+                # Get text embeddings for conditioning
+                encoder_hidden_states = learned_embeds.gather(0, timesteps.view(bsz, 1, 1).expand(-1, *learned_embeds.shape[1:]))
+                
+                # Predict noise residual
+                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                if noise_scheduler.config.prediction_type == "epsilon":
+                    target = noise
+                elif noise_scheduler.config.prediction_type == "v_prediction":
+                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                else:
+                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+                
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                accelerator.backward(loss)
+                
+                optimizer.step()
+                optimizer.zero_grad()
 
         # update learned embeddings based on updated parameters
-        if ctx.training.embedding_type == "naive":
-            learned_embeds = embedding
-        elif ctx.training.embedding_type == "cumulative":
-            learned_embeds = prompt_embeds + embedding.cumsum(dim=0)
+        learned_embeds = update_embedding(embedding)
         
         #accelerator.wait_for_everyone()
         prog_bar.set_postfix({"loss": loss.item()})
@@ -332,7 +364,9 @@ def main(ctx: DictConfig):
 
         if (i + 1) % ctx.training.eval_steps == 0:
             with torch.no_grad():
+                text_encoder.to(device)
                 eval_imgs = generate_fn(eval_latents.to(device), learned_embeds.to(device))
+                text_encoder.cpu()
                 out_folder = os.path.join(ctx.output_dir, "eval_images")
                 os.makedirs(out_folder, exist_ok=True)
                 for j, img in enumerate(eval_imgs):

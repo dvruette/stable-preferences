@@ -11,3 +11,4 @@ transformers==4.27.1
 hydra-core
 omegaconf
 scikit-learn
+einops
