@@ -1,3 +1,4 @@
+import math
 from typing import Literal, List
 
 import torch
@@ -65,11 +66,20 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         prompt_tokens = self.tokenizer(
             liked_prompts + disliked_prompts,
             return_tensors="pt",
-            padding=True,
+            max_length=self.tokenizer.model_max_length,
+            padding="max_length",
             truncation=True,
-        ).to(self.text_encoder.device)
+        )
 
-        prompt_embd = self.text_encoder(**prompt_tokens).last_hidden_state
+        if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
+            attention_mask = prompt_tokens.attention_mask.to(self.device)
+        else:
+            attention_mask = None
+
+        prompt_embd = self.text_encoder(
+            input_ids=prompt_tokens["input_ids"].to(self.device),
+            attention_mask=attention_mask,
+        ).last_hidden_state
         liked_prompts_embd = prompt_embd[: len(liked_prompts)]
         disliked_prompts_embd = prompt_embd[len(liked_prompts) :]
         liked_prompts_embds = repeat(liked_prompts_embd, 'prompts a b -> steps prompts a b', steps=num_steps)
@@ -86,11 +96,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         """
         Forward pass for the diffusion model, chunked to avoid memory issues.
         """
-        if z_all.shape[0] >= self.unet_max_chunk_size:
-            n_chunks = z_all.shape[0] // self.unet_max_chunk_size
-        else:
-            n_chunks = 1
-
+        n_chunks = math.ceil(z_all.shape[0] / self.unet_max_chunk_size)
         z_all_chunks = torch.chunk(z_all, n_chunks, dim=0)
         batched_prompt_embd_chunks = torch.chunk(batched_prompt_embd, n_chunks, dim=0)
         unet_out_all = []

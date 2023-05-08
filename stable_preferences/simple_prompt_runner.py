@@ -12,13 +12,11 @@ from stable_preferences.utils import get_free_gpu
 @hydra.main(config_path="configs", config_name="simple_prompt_runner", version_base=None)
 def main(ctx: DictConfig):
 
-    # device = "mps" if torch.backends.mps.is_available() else "cpu"
-    # device = get_free_gpu() if torch.cuda.is_available() else device
-    device = "cuda:2"
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = get_free_gpu() if torch.cuda.is_available() else device
     print(f"Using device: {device}")
 
     dtype = torch.float16 if str(device) != 'cpu' else torch.float32
-    # dtype = torch.float32
     print(f"Using dtype: {dtype}")
 
     generator = StableDiffuserWithBinaryFeedback(
@@ -29,8 +27,8 @@ def main(ctx: DictConfig):
 
     trajectory = generator.generate(
         prompt=ctx.prompt,
-        liked=ctx.liked_prompts,
-        disliked=ctx.disliked_prompts,
+        liked=list(ctx.liked_prompts),
+        disliked=list(ctx.disliked_prompts),
         field=ctx.field,
         space=ctx.space,
         binary_feedback_type='prompt',
