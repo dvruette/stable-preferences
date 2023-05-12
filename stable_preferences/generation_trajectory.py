@@ -118,6 +118,7 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         n_images: int = 1,
         walk_distance: float = 8.0,
         walk_steps: int = 1,
+        flatten_channels: bool = True,
         denoising_steps: int = 20,
         show_progress: bool = True,
         **kwargs
@@ -188,10 +189,11 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
                 field_type=field,
                 walk_distance=walk_distance,
                 n_steps=walk_steps,
+                flatten_channels=flatten_channels,
                 **kwargs,
             )
 
-            print("guidance norm: ",(noise_cond-noise_destinations).view(n_images, -1).norm(dim=1))
+            # print("guidance norm: ",(noise_cond-noise_destinations).view(n_images, -1).norm(dim=1))
             noise_destinations = noise_destinations.to(z.dtype)
             z = self.scheduler.step(noise_destinations, t, z).prev_sample
 

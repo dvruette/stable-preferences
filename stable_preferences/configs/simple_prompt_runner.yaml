@@ -2,9 +2,8 @@ model_version: "1.5"
 prompt: "Photo of a cat riding on a bicycle."
 unet_max_chunk_size: 4
 n_images: 1
-walk_distance: 12 # in the case of latent_noise and constant_direction and preference_portion 0, this is the cfg scale, i.e. "it walks in the noise space so far into the constant preference direction ignoring the liked disliked"
-walk_steps: 1
 denoising_steps: 20
+seed: 4259
 liked_prompts: 
     - "a beautiful sunset"
     - "a high-res portrait of a cat"
@@ -16,10 +15,14 @@ disliked_prompts:
     - "longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"
     # - "asphalt road"
     # - "a birds eye view of a city"
-binary_feedback_type: prompt # or "image_inversion" or "image_direct"
+binary_feedback_type: prompt  # or "image_inversion" or "image_direct"
 
-field: "constant_direction"
-seed: 4259
-additional_args: # additional parameters specifically for the field and space
+field:
+    field_type: kernel  # or "constant_direction"
+    walk_distance: 12  # in the case of latent_noise and constant_direction and preference_portion 0, this is the cfg scale, i.e. "it walks in the noise space so far into the constant preference direction ignoring the liked disliked"
+    walk_steps: 1
+    flatten_channels: false
+additional_args:  # additional parameters specifically for the field and space
     clip_preference_vec: false
     preference_portion: 1.0
+    kernel_function: inv_square
