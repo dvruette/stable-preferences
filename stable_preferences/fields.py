@@ -45,7 +45,7 @@ def walk_in_field(
                     **kwargs
                     )
         elif field_type=='polynomial':
-            walking_points = noramlized_field_step(
+            walking_points = normalized_field_step(
                     one_step,
                     walking_points,
                     latent_uncond_batch,
@@ -56,14 +56,14 @@ def walk_in_field(
                     **kwargs
                     )
         elif field_type=='inverse_polynomial':
-            walking_points = noramlized_field_step(
+            walking_points = normalized_field_step(
                     one_step,
                     walking_points,
                     latent_uncond_batch,
                     latent_cond_batch,
                     field_points_pos,
                     field_points_neg,
-                    smoothed_inverse_potential(kwargs['smoothing_radius'], kwargs['distance_power']-1),
+                    smoothed_inverse_potential(kwargs['smoothing_radius'], kwargs['distance_power']),
                     **kwargs
                     )
         else:
@@ -105,7 +105,7 @@ def constant_direction_step(
         walk_direction = conditional_directions
     return walking_points + walk_direction*one_step
 
-def noramlized_field_step(
+def normalized_field_step(
         one_step,
         walking_points,
         latent_uncond_points,
@@ -147,7 +147,7 @@ def polynomial_distance_potential(coefficient):
         assert len(p_i.shape) == 2, f'p_i must be a batched vector, but has shape {p_i.shape}'
         # p_i = repeat(p_i, 'd -> b d', b=x.shape[0])
         d = torch.norm(x-p_i, dim=1)
-        inv_walk_direction = coefficient * (x-p_i) * d.reshape(-1,1)**(coefficient-2)
+        inv_walk_direction = coefficient * (x-p_i) * d.reshape(-1,1)**(coefficient)
         return inv_walk_direction
     return potential_grad
         
