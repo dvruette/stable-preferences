@@ -33,6 +33,7 @@ def main(ctx: DictConfig):
         binary_feedback_type=ctx.binary_feedback_type,
         seed=ctx.seed,
         n_images=ctx.n_images,
+        guidance_scale=ctx.field.guidance_scale,
         walk_distance=ctx.field.walk_distance,
         walk_steps=ctx.field.walk_steps,
         flatten_channels=ctx.field.flatten_channels,
