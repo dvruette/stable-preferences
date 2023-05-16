@@ -8,6 +8,7 @@ from PIL import Image
 from einops import repeat, rearrange, pack, unpack
 from tqdm import tqdm
 from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler
+from diffusers.models.attention import BasicTransformerBlock
 
 from stable_preferences.fields import walk_in_field
 
@@ -87,28 +88,55 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         return liked_prompts_embds, disliked_prompts_embds
     
-    def get_unet_kvs(self, z_all, t, batched_prompt_embd):
-        pass
+    def get_unet_hidden_states(self, z_all, t, batched_prompt_embd):
+        cached_hidden_states = []
+        for module in self.unet.modules():
+            if isinstance(module, BasicTransformerBlock):
+                def new_forward(self, hidden_states, **kwargs):
+                    cached_hidden_states.append(hidden_states.clone().detach().cpu())
+                    return self.old_forward(hidden_states, **kwargs)
+                
+                module.attn1.old_forward = module.attn1.forward
+                module.attn1.forward = new_forward.__get__(module.attn1)
+        
+        # run forward pass to cache hidden states, output can be discarded
+        _ = self.unet(z_all, t, batched_prompt_embd)
 
-    def chunked_unet_forward(
+        # restore original forward pass
+        for module in self.unet.modules():
+            if isinstance(module, BasicTransformerBlock):
+                module.attn1.forward = module.attn1.old_forward
+                del module.attn1.old_forward
+
+        return cached_hidden_states
+    
+    def unet_forward_with_cached_hidden_states(
         self,
         z_all,
         t,
         batched_prompt_embd,
+        cached_hidden_states,
     ):
-        """
-        Forward pass for the diffusion model, chunked to avoid memory issues.
-        """
-        n_chunks = math.ceil(z_all.shape[0] / self.unet_max_chunk_size)
-        z_all_chunks = torch.chunk(z_all, n_chunks, dim=0)
-        batched_prompt_embd_chunks = torch.chunk(batched_prompt_embd, n_chunks, dim=0)
-        unet_out_all = []
-        for z_all_chunk, batched_prompt_embd_chunk in zip(z_all_chunks, batched_prompt_embd_chunks):
-            unet_out = self.unet(z_all_chunk, t, batched_prompt_embd_chunk).sample     
-            unet_out = unet_out.to(torch.float32)
-            unet_out_all.append(unet_out)
-        unet_out_all,_ = pack(unet_out_all, '* a b c')
-        return unet_out_all
+        for module in self.unet.modules():
+            if isinstance(module, BasicTransformerBlock):
+                def new_forward(self, hidden_states, **kwargs):
+                    cached_hs = cached_hidden_states.pop(0).to(hidden_states.device)
+                    hs = torch.cat([hidden_states, cached_hs], dim=1)
+                    out = self.old_forward(hs, **kwargs)
+                    return out[:, :hidden_states.shape[1]]
+                
+                module.attn1.old_forward = module.attn1.forward
+                module.attn1.forward = new_forward.__get__(module.attn1)
+
+        out = self.unet(z_all, t, batched_prompt_embd)
+
+        # restore original forward pass
+        for module in self.unet.modules():
+            if isinstance(module, BasicTransformerBlock):
+                module.attn1.forward = module.attn1.old_forward
+                del module.attn1.old_forward
+
+        return out
         
     @torch.no_grad()
     def generate(
@@ -147,8 +175,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             neg_images = [self.image_to_tensor(img) for img in disliked]
             pos_images = torch.stack(pos_images).to(self.device)
             neg_images = torch.stack(neg_images).to(self.device)
-            pos_latents = self.vae.encode(pos_images)
-            neg_latents = self.vae.encode(neg_images)
+            pos_latents = self.vae.encode(pos_images).latent_dist.sample()
+            neg_latents = self.vae.encode(neg_images).latent_dist.sample()
         else:
             raise ValueError(f"Binary feedback type {binary_feedback_type} is not supported.")
         
@@ -168,15 +196,25 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         for i, t in enumerate(iterator):
             z_single = self.scheduler.scale_model_input(z, t)
             z_all = repeat(z_single, "batch a b c -> (batch prompts) a b c", prompts=2) # we generate the next z for all prompts and then combine
+            
+            z_ref = torch.cat([pos_latents, neg_latents], dim=0)
+            z_ref = self.scheduler.scale_model_input(z_ref, t)
+            noise = torch.randn_like(z_ref)
+            z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
 
             cond_prompt_embd = cond_prompt_embds[i]
             uncond_prompt_embd = uncond_prompt_embds[i]
             prompt_embd, ps = pack([cond_prompt_embd, uncond_prompt_embd], '* a b')
             batched_prompt_embd = repeat(prompt_embd, 'prompts a b -> (batch prompts) a b', batch=n_images)
 
-            cached_kvs = self.get_unet_kvs(z_all, t, batched_prompt_embd)
+            cached_hidden_states = self.get_unet_hidden_states(z_ref_noised, t, batched_prompt_embd)
             
-            unet_out = self.chunked_unet_forward(z_all, t, batched_prompt_embd)
+            unet_out = self.unet_forward_with_cached_hidden_states(
+                z_all,
+                t,
+                batched_prompt_embd,
+                cached_hidden_states
+            ).sample
 
             unet_out = rearrange(unet_out, "(batch prompts) a b c -> batch prompts a b c", batch=n_images)
             noise_liked, noise_disliked = unpack(
@@ -185,18 +223,22 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                 'batch * a b c'
             )
 
-            noise_destinations = walk_in_field(
-                latent_uncond_batch=noise_uncond,
-                latent_cond_batch=noise_cond,
-                field_points_pos=noise_liked,
-                field_points_neg=noise_disliked,
-                field_type=field,
-                guidance_scale=guidance_scale,
-                walk_distance=walk_distance,
-                n_steps=walk_steps,
-                flatten_channels=flatten_channels,
-                **kwargs,
-            )
+            # noise_destinations = walk_in_field(
+            #     latent_uncond_batch=noise_uncond,
+            #     latent_cond_batch=noise_cond,
+            #     field_points_pos=noise_liked,
+            #     field_points_neg=noise_disliked,
+            #     field_type=field,
+            #     guidance_scale=guidance_scale,
+            #     walk_distance=walk_distance,
+            #     n_steps=walk_steps,
+            #     flatten_channels=flatten_channels,
+            #     **kwargs,
+            # )
+
+            noise_liked, noise_disliked = noise_liked.squeeze(1), noise_disliked.squeeze(1)
+            guidance = noise_liked - noise_disliked
+            noise_destinations = noise_liked + guidance_scale * guidance
 
             # print("guidance norm: ",(noise_cond-noise_destinations).view(n_images, -1).norm(dim=1))
             noise_destinations = noise_destinations.to(z.dtype)
@@ -223,6 +265,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         Convert a PIL image to a torch tensor.
         """
         image = Image.open(image)
+        if not image.mode == "RGB":
+            image = image.convert("RGB")
         image = np.array(image).astype(np.uint8)
         image = (image / 127.5 - 1.0).astype(np.float32)
         return torch.from_numpy(image).permute(2, 0, 1)
