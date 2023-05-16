@@ -13,11 +13,12 @@ from stable_preferences.utils import get_free_gpu
 def main(ctx: DictConfig):
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    device = get_free_gpu() if torch.cuda.is_available() else device
     device = "cpu"
+    device = get_free_gpu() if torch.cuda.is_available() else device
     print(f"Using device: {device}")
 
-    dtype = torch.float16 if str(device) == "cuda" else torch.float32
+    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    dtype = torch.float32
     print(f"Using dtype: {dtype}")
 
     generator = StableDiffuserWithAttentionFeedback(

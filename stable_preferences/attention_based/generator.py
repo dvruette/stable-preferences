@@ -1,4 +1,5 @@
 import math
+import os
 from typing import Literal, List
 
 import torch
@@ -123,6 +124,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                     cached_hs = cached_hidden_states.pop(0).to(hidden_states.device)
                     hs = torch.cat([hidden_states, cached_hs], dim=1)
                     out = self.old_forward(hs, **kwargs)
+                    # out = self.old_forward(hidden_states, **kwargs)
                     return out[:, :hidden_states.shape[1]]
                 
                 module.attn1.old_forward = module.attn1.forward
@@ -154,7 +156,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         flatten_channels: bool = True,
         denoising_steps: int = 20,
         show_progress: bool = True,
-        only_decode_last: bool = True,
+        only_decode_last: bool = False,
         **kwargs
     ):
         """
@@ -197,7 +199,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             z_single = self.scheduler.scale_model_input(z, t)
             z_all = repeat(z_single, "batch a b c -> (batch prompts) a b c", prompts=2) # we generate the next z for all prompts and then combine
             
-            z_ref = torch.cat([pos_latents, neg_latents], dim=0)
+            # z_ref = torch.cat([pos_latents, neg_latents], dim=0)
+            z_ref = torch.cat([pos_latents, pos_latents], dim=0)
             z_ref = self.scheduler.scale_model_input(z_ref, t)
             noise = torch.randn_like(z_ref)
             z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
@@ -247,6 +250,9 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             if not only_decode_last or i == len(self.scheduler.timesteps) - 1:
                 y = self.decode_latents(z)
                 piled = self.numpy_to_pil(y)
+                os.makedirs("outputs/trajectory", exist_ok=True)
+                for j, img in enumerate(piled):
+                    img.save(f"outputs/trajectory/{i}_{j}.png")
                 traj.append(piled)
 
         return traj
