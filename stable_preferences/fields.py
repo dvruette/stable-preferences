@@ -191,3 +191,63 @@ def constant_direction_step(
         preference_directions *= torch.minimum(conditional_directions.norm(dim=1), preference_directions.norm(dim=1)).view(-1,1)
 
     return preference_directions
+
+
+
+
+### COPIED FROM DEBUGGED MAIN
+
+def normalized_field_step(
+        one_step,
+        walking_points,
+        latent_uncond_points,
+        latent_cond_points,
+        field_points_pos,
+        field_points_neg,
+        pot_grad,
+        **kwargs
+    ):
+    """
+    Take one step in a polynomial field of the form SUM_i |x-p_i|^coefficient
+    """
+    field_points_pos = rearrange(field_points_pos, 'batch liked_points a -> liked_points batch a')
+    field_points_neg = rearrange(field_points_neg, 'batch disliked_points a -> disliked_points batch a')
+    preference_portion = kwargs['preference_portion']
+    coefficient = kwargs['coefficient']
+    conditional_directions = latent_cond_points - latent_uncond_points
+    if 0 not in field_points_pos.shape and 0 not in field_points_neg.shape:
+        # pot_grad = polynomial_distance_potential(coefficient)
+        summed_pot_grad = torch.zeros_like(conditional_directions)
+        for p_i in field_points_pos:
+            summed_pot_grad += pot_grad(walking_points, p_i)
+        for p_i in field_points_neg:
+            summed_pot_grad -= pot_grad(walking_points, p_i)
+        walk_direction_preference = normalize(-summed_pot_grad)
+        walk_direction = preference_portion * walk_direction_preference + (1-preference_portion) * conditional_directions
+    else:
+        print('Warning: No conditional points or no unconditional points. Using conditional directions only. Ignoring all liked and disliked images.')
+        walk_direction = conditional_directions
+    return walking_points + walk_direction*one_step
+
+
+
+
+def polynomial_distance_potential(coefficient):
+    # defines the potential field of SUM_i (x-p_i)^coefficient
+    # the field potential is to be minimized
+    def potential_grad(x, p_i):
+        assert len(p_i.shape) == 2, f'p_i must be a batched vector, but has shape {p_i.shape}'
+        # p_i = repeat(p_i, 'd -> b d', b=x.shape[0])
+        d = torch.norm(x-p_i, dim=1)
+        inv_walk_direction = coefficient * (x-p_i) * d.reshape(-1,1)**(coefficient)
+        return inv_walk_direction
+    return potential_grad
+        
+def smoothed_inverse_potential(smoothing_radius, distance_strength):
+    def potential_grad(x,p_i):
+        assert len(p_i.shape) == 2, f'p_i must be a batched vector, but has shape {p_i.shape}'
+        d = torch.norm(x-p_i, dim=1)
+        print(d)
+        inv_walk_direction = (x-p_i) * (1/(d**distance_strength+smoothing_radius)).reshape(-1,1)
+        return inv_walk_direction
+    return potential_grad
