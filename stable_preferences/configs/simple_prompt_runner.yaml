@@ -19,8 +19,9 @@ binary_feedback_type: prompt  # or "image_inversion" or "image_direct"
 
 field:
     field_type: kernel  # or "constant_direction"
-    walk_distance: 12  # in the case of latent_noise and constant_direction and preference_portion 0, this is the cfg scale, i.e. "it walks in the noise space so far into the constant preference direction ignoring the liked disliked"
-    walk_steps: 1
+    guidance_scale: 12
+    walk_distance: 1.0
+    walk_steps: 100
     flatten_channels: false
 additional_args:  # additional parameters specifically for the field and space
     clip_preference_vec: false
