@@ -1,0 +1,13 @@
+model_id: "stabilityai/stable-diffusion-2-1-base"
+# model_id: "runwayml/stable-diffusion-v1-5"
+output_dir: "."
+device: "cuda:4"
+num_ddim_steps: 50
+guidance_scale: 7.5
+max_num_words: 77
+image_path: "/local/home/efedele/stable-preferences/stable_preferences/null-text-inversion/example_images/gnochi_mirror.jpeg"
+prompt: "a cat sitting next to a mirror"
+save_image: True
+save_embeddings: True
+output_image_path: "/data/efedele/style/gnochi_mirror_rec.png"
+output_embedding_path: "/data/efedele/style/gnochi_mirror_embeddings.pt"
