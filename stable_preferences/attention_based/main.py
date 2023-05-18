@@ -13,7 +13,7 @@ from stable_preferences.utils import get_free_gpu
 def main(ctx: DictConfig):
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    device = "cpu"
+    # device = "cpu"
     device = get_free_gpu() if torch.cuda.is_available() else device
     print(f"Using device: {device}")
 

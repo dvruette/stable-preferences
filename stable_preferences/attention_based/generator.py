@@ -31,7 +31,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version must be either '1.5' or '2.1'")
 
         scheduler = DPMSolverSinglestepScheduler.from_pretrained(model_name, subfolder="scheduler")
-        pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype)
+        pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype, safety_checker=None)
         # pipe = StableDiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
 
         self.pipeline = pipe
@@ -52,10 +52,10 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
-    def initialize_prompts(self, cond_prompt, uncond_prompt):
+    def initialize_prompts(self, cond_prompt, uncond_prompt=""):
 
         prompt_tokens = self.tokenizer(
-            [cond_prompt, uncond_prompt],
+            [uncond_prompt, cond_prompt],
             return_tensors="pt",
             max_length=self.tokenizer.model_max_length,
             padding="max_length",
@@ -152,7 +152,9 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         if seed is not None:
             torch.manual_seed(seed)
 
-        # out = self.pipeline(prompt, guidance_scale=guidance_scale, num_inference_steps=denoising_steps)
+        z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
+
+        # out = self.pipeline(prompt, guidance_scale=guidance_scale, num_inference_steps=denoising_steps, latents=z)
         # return [out.images]
 
         pos_images = [self.image_to_tensor(img) for img in liked]
@@ -162,7 +164,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         pos_latents = self.vae.encode(pos_images).latent_dist.sample()
         neg_latents = self.vae.encode(neg_images).latent_dist.sample()
         
-        cond_prompt_embd, uncond_prompt_embd = self.initialize_prompts(prompt, "")
+        uncond_prompt_embd, cond_prompt_embd = self.initialize_prompts(prompt, "")
 
         self.scheduler.set_timesteps(denoising_steps, device=self.device)
 
@@ -170,14 +172,14 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         if show_progress:
             iterator = tqdm(iterator)
 
-        z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
+        # z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
         z = z * self.scheduler.init_noise_sigma
 
         traj = []
         for i, t in enumerate(iterator):
-            z_single = self.scheduler.scale_model_input(z, t)
-            z_all = torch.cat([z_single] * 2, dim=0)
-            batched_prompt_embd = torch.stack([cond_prompt_embd, uncond_prompt_embd], dim=0)
+            z_all = torch.cat([z] * 2, dim=0)
+            z_all = self.scheduler.scale_model_input(z_all, t)
+            batched_prompt_embd = torch.stack([uncond_prompt_embd, cond_prompt_embd], dim=0)
             
             # # z_ref = torch.cat([pos_latents, neg_latents], dim=0)
             # z_ref = torch.cat([pos_latents, pos_latents], dim=0)
@@ -195,7 +197,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             # ).sample
             unet_out = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd).sample
 
-            noise_cond, noise_uncond = unet_out.chunk(2)
+            noise_uncond, noise_cond = unet_out.chunk(2)
 
             guidance = noise_cond - noise_uncond
             noise_pred = noise_uncond + guidance_scale * guidance
