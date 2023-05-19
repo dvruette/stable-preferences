@@ -79,15 +79,15 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         cached_hidden_states = []
         for module in self.unet.modules():
             if isinstance(module, BasicTransformerBlock):
-                def new_forward(self, hidden_states, **kwargs):
+                def new_forward(self, hidden_states, *args, **kwargs):
                     cached_hidden_states.append(hidden_states.clone().detach().cpu())
-                    return self.old_forward(hidden_states, **kwargs)
+                    return self.old_forward(hidden_states, *args, **kwargs)
                 
                 module.attn1.old_forward = module.attn1.forward
                 module.attn1.forward = new_forward.__get__(module.attn1)
         
         # run forward pass to cache hidden states, output can be discarded
-        _ = self.unet(z_all, t, batched_prompt_embd)
+        _ = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd)
 
         # restore original forward pass
         for module in self.unet.modules():
@@ -106,17 +106,19 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
     ):
         for module in self.unet.modules():
             if isinstance(module, BasicTransformerBlock):
-                def new_forward(self, hidden_states, **kwargs):
+                def new_forward(self, hidden_states, *args, encoder_hidden_states=None, **kwargs):
                     cached_hs = cached_hidden_states.pop(0).to(hidden_states.device)
+                    if encoder_hidden_states is not None:
+                        print(encoder_hidden_states.shape)
                     hs = torch.cat([hidden_states, cached_hs], dim=1)
-                    out = self.old_forward(hs, **kwargs)
-                    # out = self.old_forward(hidden_states, **kwargs)
-                    return out[:, :hidden_states.shape[1]]
+                    # out = self.old_forward(hs, *args, **kwargs)
+                    out = self.old_forward(hidden_states, *args, encoder_hidden_states=hs, **kwargs)
+                    return out
                 
                 module.attn1.old_forward = module.attn1.forward
                 module.attn1.forward = new_forward.__get__(module.attn1)
 
-        out = self.unet(z_all, t, batched_prompt_embd)
+        out = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd)
 
         # restore original forward pass
         for module in self.unet.modules():
@@ -130,6 +132,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
     def generate(
         self,
         prompt: str = "a photo of an astronaut riding a horse on mars",
+        negative_prompt: str = "",
         liked: List[str] = [],
         disliked: List[str] = [],
         field: Literal["constant_direction"] = "constant_direction",
@@ -159,12 +162,12 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         pos_images = [self.image_to_tensor(img) for img in liked]
         neg_images = [self.image_to_tensor(img) for img in disliked]
-        pos_images = torch.stack(pos_images).to(self.device)
-        neg_images = torch.stack(neg_images).to(self.device)
-        pos_latents = self.vae.encode(pos_images).latent_dist.sample()
-        neg_latents = self.vae.encode(neg_images).latent_dist.sample()
+        pos_images = torch.stack(pos_images).to(self.device, dtype=self.dtype)
+        neg_images = torch.stack(neg_images).to(self.device, dtype=self.dtype)
+        pos_latents = self.vae.config.scaling_factor * self.vae.encode(pos_images).latent_dist.sample()
+        neg_latents = self.vae.config.scaling_factor * self.vae.encode(neg_images).latent_dist.sample()
         
-        uncond_prompt_embd, cond_prompt_embd = self.initialize_prompts(prompt, "")
+        uncond_prompt_embd, cond_prompt_embd = self.initialize_prompts(prompt, negative_prompt)
 
         self.scheduler.set_timesteps(denoising_steps, device=self.device)
 
@@ -181,21 +184,22 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             z_all = self.scheduler.scale_model_input(z_all, t)
             batched_prompt_embd = torch.stack([uncond_prompt_embd, cond_prompt_embd], dim=0)
             
-            # # z_ref = torch.cat([pos_latents, neg_latents], dim=0)
-            # z_ref = torch.cat([pos_latents, pos_latents], dim=0)
-            # z_ref = self.scheduler.scale_model_input(z_ref, t)
-            # noise = torch.randn_like(z_ref)
-            # z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
+            # z_ref = torch.cat([z_all[:1], pos_latents], dim=0)
+            z_ref = torch.cat([pos_latents, pos_latents], dim=0)
+            # z_ref = torch.cat([neg_latents, pos_latents], dim=0)
+            z_ref = self.scheduler.scale_model_input(z_ref, t)
+            noise = torch.randn_like(z_ref)
+            z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
 
-            # cached_hidden_states = self.get_unet_hidden_states(z_ref_noised, t, batched_prompt_embd)
+            cached_hidden_states = self.get_unet_hidden_states(z_ref_noised, t, batched_prompt_embd)
             
-            # unet_out = self.unet_forward_with_cached_hidden_states(
-            #     z_all,
-            #     t,
-            #     batched_prompt_embd,
-            #     cached_hidden_states
-            # ).sample
-            unet_out = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd).sample
+            unet_out = self.unet_forward_with_cached_hidden_states(
+                z_all,
+                t,
+                batched_prompt_embd,
+                cached_hidden_states
+            ).sample
+            # unet_out = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd).sample
 
             noise_uncond, noise_cond = unet_out.chunk(2)
 
