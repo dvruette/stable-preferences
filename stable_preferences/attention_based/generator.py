@@ -184,8 +184,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             z_all = self.scheduler.scale_model_input(z_all, t)
             batched_prompt_embd = torch.stack([uncond_prompt_embd, cond_prompt_embd], dim=0)
             
-            # z_ref = torch.cat([z_all[:1], pos_latents], dim=0)
-            z_ref = torch.cat([pos_latents, pos_latents], dim=0)
+            z_ref = torch.cat([z_all[:1], pos_latents], dim=0)
+            # z_ref = torch.cat([pos_latents, pos_latents], dim=0)
             # z_ref = torch.cat([neg_latents, pos_latents], dim=0)
             z_ref = self.scheduler.scale_model_input(z_ref, t)
             noise = torch.randn_like(z_ref)

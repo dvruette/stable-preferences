@@ -51,7 +51,8 @@ def main(ctx: DictConfig):
     os.makedirs(out_folder, exist_ok=True)
     
     for img in imgs:
-        n_files = len([name for name in os.listdir(out_folder)])
+        # each image is of the form example_ID.png. Extract the max id
+        n_files = max([int(f.split(".")[0].split("_")[1]) for f in os.listdir(out_folder) if f.endswith(".png")], default=0) + 1
         out_path = os.path.join(out_folder, f"example_{n_files}.png")
         img.save(out_path)
         print(f"Saved image to {out_path}")
