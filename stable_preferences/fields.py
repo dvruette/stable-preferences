@@ -4,20 +4,20 @@ from typing import Literal
 import torch
 import torch.nn.functional as F
 from einops import repeat, rearrange, pack, unpack
-
+from torch.nn.functional import normalize
 
 def walk_in_field(
     latent_uncond_batch: torch.Tensor,
     latent_cond_batch: torch.Tensor,
     field_points_pos: torch.Tensor,
     field_points_neg: torch.Tensor,
-    field_type: Literal["constant_direction", "kernel"] = "constant_direction",
-    walk_distance: float = 1.0,
-    guidance_scale: float = 7.0,
-    walk_type: Literal["pre_guidance", "joint", "post_guidance"] = "pre_guidance",
-    n_steps: int = 1,
-    flatten_channels: bool = True,
-    preference_portion: float = 0.5,
+    field_type: Literal["constant_direction", "kernel"] = "throw error",
+    walk_distance: float = "throw error",
+    guidance_scale: float = "throw error",
+    walk_type: Literal["pre_guidance", "joint", "post_guidance"] = "throw error",
+    n_steps: int = "throw error",
+    flatten_channels = "error",
+    preference_portion: float = "throw error",
     **kwargs,  # any further arguments that are needed for the field type
 ):
     """
@@ -49,7 +49,9 @@ def walk_in_field(
     if field_type == "constant_direction":
         step_fn = functools.partial(constant_direction_step, **kwargs)
     elif field_type == "kernel":
-        step_fn = functools.partial(kernel_step, **kwargs)
+        step_fn = functools.partial(kernel_step, field_type=field_type, **kwargs)
+    elif field_type == "smoothed_inverse_polynomial":
+        step_fn = functools.partial(normalized_field_step, field_type=field_type, **kwargs)
     else:
         raise NotImplementedError(f"Field type {field_type} not implemented.")
     
@@ -198,22 +200,28 @@ def constant_direction_step(
 ### COPIED FROM DEBUGGED MAIN
 
 def normalized_field_step(
-        one_step,
         walking_points,
         latent_uncond_points,
         latent_cond_points,
         field_points_pos,
         field_points_neg,
-        pot_grad,
         **kwargs
     ):
     """
     Take one step in a polynomial field of the form SUM_i |x-p_i|^coefficient
     """
+    field_type = kwargs['field_type']
+    smoothing_strength = kwargs['smoothing_strength']
+    poly_coefficient = kwargs['poly_coefficient']
+    if field_type == "polynomial":
+        pot_grad = polynomial_distance_potential(poly_coefficient)
+    elif field_type == "smoothed_inverse_polynomial":
+        pot_grad = smoothed_inverse_potential(smoothing_strength, poly_coefficient)
+    else:
+        raise ValueError(f"Unknown field type {field_type}")
     field_points_pos = rearrange(field_points_pos, 'batch liked_points a -> liked_points batch a')
     field_points_neg = rearrange(field_points_neg, 'batch disliked_points a -> disliked_points batch a')
-    preference_portion = kwargs['preference_portion']
-    coefficient = kwargs['coefficient']
+    # preference_portion = kwargs['preference_portion']
     conditional_directions = latent_cond_points - latent_uncond_points
     if 0 not in field_points_pos.shape and 0 not in field_points_neg.shape:
         # pot_grad = polynomial_distance_potential(coefficient)
@@ -223,11 +231,11 @@ def normalized_field_step(
         for p_i in field_points_neg:
             summed_pot_grad -= pot_grad(walking_points, p_i)
         walk_direction_preference = normalize(-summed_pot_grad)
-        walk_direction = preference_portion * walk_direction_preference + (1-preference_portion) * conditional_directions
+        # walk_direction = preference_portion * walk_direction_preference + (1-preference_portion) * conditional_directions
     else:
         print('Warning: No conditional points or no unconditional points. Using conditional directions only. Ignoring all liked and disliked images.')
-        walk_direction = conditional_directions
-    return walking_points + walk_direction*one_step
+        walk_direction_preference = conditional_directions
+    return walk_direction_preference
 
 
 
@@ -247,7 +255,7 @@ def smoothed_inverse_potential(smoothing_radius, distance_strength):
     def potential_grad(x,p_i):
         assert len(p_i.shape) == 2, f'p_i must be a batched vector, but has shape {p_i.shape}'
         d = torch.norm(x-p_i, dim=1)
-        print(d)
+        # print(d)
         inv_walk_direction = (x-p_i) * (1/(d**distance_strength+smoothing_radius)).reshape(-1,1)
         return inv_walk_direction
     return potential_grad
