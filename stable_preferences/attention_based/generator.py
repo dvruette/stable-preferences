@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 from einops import repeat, rearrange, pack, unpack
 from tqdm import tqdm
-from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler
+from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler, EulerAncestralDiscreteScheduler
 from diffusers.models.attention import BasicTransformerBlock
 
 from stable_preferences.fields import walk_in_field
@@ -30,7 +30,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         else:
             raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version must be either '1.5' or '2.1'")
 
-        scheduler = DPMSolverSinglestepScheduler.from_pretrained(model_name, subfolder="scheduler")
+        # scheduler = DPMSolverSinglestepScheduler.from_pretrained(model_name, subfolder="scheduler")
+        scheduler = EulerAncestralDiscreteScheduler.from_pretrained(model_name, subfolder="scheduler")
         pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype, safety_checker=None)
         # pipe = StableDiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
 
@@ -103,16 +104,24 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         t,
         batched_prompt_embd,
         cached_hidden_states,
+        style_fidelity: float = 0.5,
     ):
         for module in self.unet.modules():
             if isinstance(module, BasicTransformerBlock):
-                def new_forward(self, hidden_states, *args, encoder_hidden_states=None, **kwargs):
+                def new_forward(self, hidden_states, encoder_hidden_states=None, **kwargs):
                     cached_hs = cached_hidden_states.pop(0).to(hidden_states.device)
                     if encoder_hidden_states is not None:
                         print(encoder_hidden_states.shape)
                     hs = torch.cat([hidden_states, cached_hs], dim=1)
-                    # out = self.old_forward(hs, *args, **kwargs)
-                    out = self.old_forward(hidden_states, *args, encoder_hidden_states=hs, **kwargs)
+                    out_uncond = self.old_forward(hs)
+                    out_uncond = out_uncond[:, :hidden_states.shape[1]]
+                    out_cond = out_uncond.clone()
+                    if style_fidelity > 0:
+                        # set unconditional image to self-attention only
+                        out_cond[[1]] = self.old_forward(hidden_states[[1]])
+                    # large style_fidelity -> unconditional image is conditioned mostly on itself -> importance of reference gets amplified
+                    # small style_fidelity -> unconditional image is conditioned on reference -> importance of prompt gets amplified
+                    out = style_fidelity * out_cond + (1 - style_fidelity) * out_uncond
                     return out
                 
                 module.attn1.old_forward = module.attn1.forward
@@ -156,6 +165,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             torch.manual_seed(seed)
 
         z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
+        # z = torch.load("latents.pt").to(self.device, dtype=self.dtype).unsqueeze(0)
 
         # out = self.pipeline(prompt, guidance_scale=guidance_scale, num_inference_steps=denoising_steps, latents=z)
         # return [out.images]
@@ -166,8 +176,9 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         neg_images = torch.stack(neg_images).to(self.device, dtype=self.dtype)
         pos_latents = self.vae.config.scaling_factor * self.vae.encode(pos_images).latent_dist.sample()
         neg_latents = self.vae.config.scaling_factor * self.vae.encode(neg_images).latent_dist.sample()
+        # pos_latents = torch.load("latent_hint.pt").to(self.device, dtype=self.dtype)[:1]
         
-        uncond_prompt_embd, cond_prompt_embd = self.initialize_prompts(prompt, negative_prompt)
+        cond_prompt_embd, uncond_prompt_embd = self.initialize_prompts(prompt, negative_prompt)
 
         self.scheduler.set_timesteps(denoising_steps, device=self.device)
 
@@ -180,16 +191,19 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         traj = []
         for i, t in enumerate(iterator):
-            z_all = torch.cat([z] * 2, dim=0)
-            z_all = self.scheduler.scale_model_input(z_all, t)
+            z_single = self.scheduler.scale_model_input(z, t)
+            z_all = torch.cat([z_single] * 2, dim=0)
             batched_prompt_embd = torch.stack([uncond_prompt_embd, cond_prompt_embd], dim=0)
             
-            z_ref = torch.cat([z_all[:1], pos_latents], dim=0)
-            # z_ref = torch.cat([pos_latents, pos_latents], dim=0)
-            # z_ref = torch.cat([neg_latents, pos_latents], dim=0)
-            z_ref = self.scheduler.scale_model_input(z_ref, t)
+            # z_ref = torch.cat([pos_latents, z_all[:1]], dim=0)
+            z_ref = torch.cat([pos_latents, pos_latents], dim=0)
+            # z_ref = torch.cat([pos_latents, neg_latents], dim=0)
+            # z_ref = self.scheduler.scale_model_input(z_ref, t)
+            sigma = self.scheduler.sigmas[i]
+            alpha_hat = 1 / (sigma**2 + 1)
             noise = torch.randn_like(z_ref)
-            z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
+            z_ref_noised = alpha_hat * z_ref + (1 - alpha_hat) * noise
+            # z_ref_noised = torch.load("ref_xt.pt").to(self.device, dtype=self.dtype)
 
             cached_hidden_states = self.get_unet_hidden_states(z_ref_noised, t, batched_prompt_embd)
             
@@ -201,7 +215,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             ).sample
             # unet_out = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd).sample
 
-            noise_uncond, noise_cond = unet_out.chunk(2)
+            noise_cond, noise_uncond = unet_out.chunk(2)
 
             guidance = noise_cond - noise_uncond
             noise_pred = noise_uncond + guidance_scale * guidance
@@ -209,7 +223,14 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             z = self.scheduler.step(noise_pred, t, z).prev_sample
 
             if not only_decode_last or i == len(self.scheduler.timesteps) - 1:
-                y = self.pipeline.decode_latents(z)
+                if i < len(self.scheduler.timesteps) - 1:
+                    lats_x0 = (z_single - (1 - alpha_hat)**0.5 * noise_cond) / alpha_hat**0.5
+                    sq_beta_hat = (1 - alpha_hat)**0.5
+                    pred_x0 = sq_beta_hat*lats_x0 + (1 - sq_beta_hat)*z_single
+                else:
+                    pred_x0 = z
+
+                y = self.pipeline.decode_latents(pred_x0)
                 piled = self.pipeline.numpy_to_pil(y)
                 os.makedirs("outputs/trajectory", exist_ok=True)
                 for j, img in enumerate(piled):
