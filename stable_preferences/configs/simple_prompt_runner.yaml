@@ -1,8 +1,8 @@
 model_version: "1.5"
 prompt: "Photo of a cat riding on a bicycle."
-unet_max_chunk_size: 4
-n_images: 1
-denoising_steps: 20
+unet_max_chunk_size: 8
+n_images: 2
+denoising_steps: 50
 seed: 4259
 liked_prompts: 
     - "a beautiful sunset"
@@ -18,12 +18,15 @@ disliked_prompts:
 binary_feedback_type: prompt  # or "image_inversion" or "image_direct"
 
 field:
-    field_type: kernel  # or "constant_direction"
-    guidance_scale: 12
-    walk_distance: 1.0
+    field_type: smoothed_inverse_polynomial  # or "constant_direction"
+    guidance_scale: 9
+    walk_distance: 0.0 # only for post or pre guidance
     walk_steps: 100
-    flatten_channels: false
+    flatten_channels: true
+    preference_portion: 0.5
+    walk_type: "joint"
 additional_args:  # additional parameters specifically for the field and space
     clip_preference_vec: false
-    preference_portion: 1.0
     kernel_function: inv_square
+    smoothing_strength: 1.0
+    poly_coefficient: 4.0

@@ -5,10 +5,10 @@ model_id: stabilityai/stable-diffusion-2-1-base
 # model_id: "runwayml/stable-diffusion-v1-5"
 output_dir: "."
 device: "cuda:0"
-report_to: "wandb"
+report_to: 
 data:
-  human_preference_dataset_path: ../align_sd/dataset
-  training_example_id: 3
+  human_preference_dataset_path: /local/home/jthomm/stable-preferences/data/preference_images_sample
+  training_example_id: 12
   center_crop: false
   repeats: 100
   resolution: 512
@@ -22,9 +22,9 @@ training:
   lr_scheduler: "constant"
   lr_warmup_steps: 0
   steps: 5000
-  batch_size: 4
+  batch_size: 8
   eval_batch_size: 2
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 1
   save_steps: 100
   eval_steps: 10
   adam_beta1: 0.9

@@ -113,12 +113,14 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
         liked: List[str] = [],
         disliked: List[str] = [],
         field: Literal["constant_direction"] = "constant_direction",
+        preference_portion: float = 0.5,
         binary_feedback_type: Literal["prompt", "image"] = "prompt",
         seed: int = 42,
         n_images: int = 1,
         guidance_scale: float = 8.0,
         walk_distance: float = 1.0,
         walk_steps: int = 50,
+        walk_type = "throw error please",
         flatten_channels: bool = True,
         denoising_steps: int = 20,
         show_progress: bool = True,
@@ -192,6 +194,8 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
                 walk_distance=walk_distance,
                 n_steps=walk_steps,
                 flatten_channels=flatten_channels,
+                preference_portion=preference_portion,
+                walk_type=walk_type,
                 **kwargs,
             )
 
