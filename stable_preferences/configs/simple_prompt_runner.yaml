@@ -5,21 +5,20 @@ liked_prompts: [
     "a high-res nationalgeographic photo of a cat",
     "best quality, extremely detailed"
     ] #["brown cat", "a beautiful sunset", "a high-res portrait of a cat"]
-disliked_prompts: []#["longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"] #["asphalt road", "a birds eye view of a city"]
-unet_max_chunk_size: 4
+disliked_prompts: ["longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"] #["asphalt road", "a birds eye view of a city"]
+unet_max_chunk_size: 16
 n_images: 8
 walk_distance: 9 # in the case of latent_noise and constant_direction and preference_portion 0, this is the cfg scale, i.e. "it walks in the noise space so far into the constant preference direction ignoring the liked disliked"
-walk_steps: 1
-denoising_steps: 20
+walk_steps: 100
+denoising_steps: 50
 # binary_feedback_type: 'prompt'/'image_inversion'/'image_direct'
 
-field: "constant_direction"
+field: "inverse_polynomial"
 space: "latent_noise"
 seed: 42234
 additional_args: { # additional parameters specifically for the field and space
     clip_preference_vec: false,
-    preference_portion: 0.4,
-    coefficient: .5,
+    preference_portion: 0.5,
     smoothing_radius: 1,
     distance_power: 2,
 }

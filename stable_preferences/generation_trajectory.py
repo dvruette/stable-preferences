@@ -112,13 +112,13 @@ class StableDiffuserWithBinaryFeedback:
         z_all_chunks = torch.chunk(z_all, n_chunks, dim=0)
         batched_prompt_embd_chunks = torch.chunk(batched_prompt_embd, n_chunks, dim=0)
         unet_out_all = []
-        print("Chunked unet forward pass")
+        # print("Chunked unet forward pass")
         for z_all_chunk, batched_prompt_embd_chunk in zip(z_all_chunks, batched_prompt_embd_chunks):
             unet_out = unet(z_all_chunk, t, batched_prompt_embd_chunk).sample     
             unet_out = unet_out.to(torch.float32)
             unet_out_all.append(unet_out)
         unet_out_all,_ = pack(unet_out_all, '* a b c')
-        print("Chunked unet forward pass done")
+        # print("Chunked unet forward pass done")
         return unet_out_all
 
     def optimize_noise(
@@ -142,14 +142,14 @@ class StableDiffuserWithBinaryFeedback:
         max_iterations = 100
 
         iterations_used=0
-        print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
+        # print(f"Initial loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
         for iteration in range(max_iterations):
             current_points.grad.zero_()
 
             current_points_in_space = space_converter(current_points)
             loss = torch.nn.functional.mse_loss(current_points_in_space, in_space_destinations, reduction='sum')
             if loss.item() < convergence_threshold:
-                print(f"Converged after {iteration} iterations")
+                # print(f"Converged after {iteration} iterations")
                 break
             loss.backward()
 
@@ -158,8 +158,8 @@ class StableDiffuserWithBinaryFeedback:
                 current_points -= lr * current_points.grad
 
             iterations_used += 1
-
-        print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
+        if loss.item() > convergence_threshold:
+            print(f"Final loss from optimization: {torch.nn.functional.mse_loss(space_converter(current_points), in_space_destinations, reduction='sum')} in {iterations_used} many iterations")
         return current_points.clone().detach().requires_grad_(False)
 
         
@@ -212,6 +212,7 @@ class StableDiffuserWithBinaryFeedback:
         norms = []
         z = torch.randn(self.n_images, 4, 64, 64, device=self.device)
         z = z * scheduler.init_noise_sigma
+        guidance_norms = []
         for iteration, t in enumerate(iterator):
             z_single = scheduler.scale_model_input(z, t)
             z_all = repeat(z_single, "batch a b c -> (batch prompts) a b c", prompts=2 + len(liked) + len(disliked)) # we generate the next z for all prompts and then combine
@@ -259,12 +260,13 @@ class StableDiffuserWithBinaryFeedback:
             # cfg_vector = noise_cond - noise_uncond
             # noise_destinations = noise_cond + self.walk_distance*cfg_vector
 
-            print("guidance norm: ",(noise_cond-noise_destinations).view(self.n_images, -1).norm(dim=1))
+            # print("guidance norm: ",(noise_cond-noise_destinations).view(self.n_images, -1).norm(dim=1))
+            guidance_norms.append((noise_cond-noise_destinations).view(self.n_images, -1).norm(dim=1))
             noise_destinations = noise_destinations.to(z.dtype)
             z = scheduler.step(noise_destinations, t, z).prev_sample
 
             y = self.diffusion_pipe.decode_latents(z)
             piled = self.diffusion_pipe.numpy_to_pil(y)
             traj.append(piled)
-
+        print("guidance norms: ", torch.stack(guidance_norms))
         return traj

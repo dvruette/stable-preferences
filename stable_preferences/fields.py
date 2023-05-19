@@ -121,7 +121,7 @@ def normalized_field_step(
     field_points_pos = rearrange(field_points_pos, 'batch liked_points a -> liked_points batch a')
     field_points_neg = rearrange(field_points_neg, 'batch disliked_points a -> disliked_points batch a')
     preference_portion = kwargs['preference_portion']
-    coefficient = kwargs['coefficient']
+    # coefficient = kwargs['coefficient']
     conditional_directions = latent_cond_points - latent_uncond_points
     if 0 not in field_points_pos.shape and 0 not in field_points_neg.shape:
         # pot_grad = polynomial_distance_potential(coefficient)
@@ -155,7 +155,7 @@ def smoothed_inverse_potential(smoothing_radius, distance_strength):
     def potential_grad(x,p_i):
         assert len(p_i.shape) == 2, f'p_i must be a batched vector, but has shape {p_i.shape}'
         d = torch.norm(x-p_i, dim=1)
-        print(d)
+        # print(d)
         inv_walk_direction = (x-p_i) * (1/(d**distance_strength+smoothing_radius)).reshape(-1,1)
         return inv_walk_direction
     return potential_grad

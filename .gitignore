@@ -18,3 +18,7 @@ clip_guided_sd/**/*.png
 human_preference_dataset/dataset
 human_preference_dataset/weights
 human_preference_dataset/adapted_model
+
+data
+dimitri_env_requirements.txt
+dimitrienv
