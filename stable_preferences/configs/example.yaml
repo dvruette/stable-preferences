@@ -1,7 +1,9 @@
 model_id: "stabilityai/stable-diffusion-2-1-base"
-prompt: "a photo of an astronaut riding a horse on mars"
+prompt: "A cat riding a bike."
+width: 512
+height: 512
 neg_prompt: ""
-cfg_scale: 7
+cfg_scale: 9
 steps: 20
-seed: null
-device: "auto"
+seed: 42
+device: "cuda:0"

@@ -30,7 +30,7 @@ def main(ctx: DictConfig):
     print(f"VAE: {sum(p.numel() for p in pipe.vae.parameters()) / 1e6:.0f}M")
     print(f"TextEncoder: {sum(p.numel() for p in pipe.text_encoder.parameters()) / 1e6:.0f}M")
 
-    if MODE!= "binary_feedback":
+    if MODE != "binary_feedback":
         traj = generate_trajectory(
             pipe,
             ctx.prompt,

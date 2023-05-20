@@ -1,9 +1,21 @@
 import json
 import random
+import os
+import functools
+
+from PIL import Image
 
 
 class HumanPreferenceDatasetReader:
-    def __init__(self, file_path):
+    def __init__(self, dataset_path, train_file="preference_train.json", test_file="preference_test.json", split="train"):
+        if split == "train":
+            file_path = os.path.join(dataset_path, train_file)
+        elif split == "test":
+            file_path = os.path.join(dataset_path, test_file)
+        else:
+            raise ValueError("split must be either train or test")
+        
+        self.dataset_path = dataset_path
         self.data = self.read_json_file(file_path)
         self.user_hash_index = self._build_user_hash_index()
         self.id_index = self._build_id_index()
@@ -61,8 +73,20 @@ class HumanPreferenceDatasetReader:
         data = self.get_data_by_user_hash(user_hash)
         return [item["prompt"] for item in data]
 
+    @functools.lru_cache(maxsize=1)
     def get_all_prompts(self):
         return [item["prompt"] for item in self.data]
 
-    def sample_random_prompt(self):
+    def get_random_prompt(self):
         return random.choice(self.get_all_prompts())
+    
+    def get_example_by_id(self, id):
+        item = self.get_data_by_id(id)
+        images = [Image.open(os.path.join(self.dataset_path, path)) for path in item["file_path"]]
+        out = {**item}
+        out["images"] = images
+        return out
+    
+    def get_random_example(self):
+        id = random.choice(self.get_all_ids())
+        return self.get_example_by_id(id)

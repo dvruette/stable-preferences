@@ -29,6 +29,7 @@ class HumanPreferenceScore:
         images = [Image.open(image_path) for image_path in image_paths]
         return self.compute(text, images)
 
+    @torch.no_grad()
     def compute(self, text, images):
         """
         ::param text: str

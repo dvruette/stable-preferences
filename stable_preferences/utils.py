@@ -160,22 +160,27 @@ def generate_trajectory_with_binary_feedback(
     z = z * scheduler.init_noise_sigma
 
     scheduler.set_timesteps(steps, device=device)
-    if liked_prompts==[]: liked_prompts = [""]
-    if disliked_prompts==[]: disliked_prompts = [""]
-    prompt_tokens = tokenizer([pos_prompt] + [neg_prompt] + liked_prompts + disliked_prompts, return_tensors="pt", padding=True, truncation=True).to(z.device)
-    prompt_embd = text_encoder(**prompt_tokens).last_hidden_state
-    pos_prompt_embd = prompt_embd[:1] # first element
-    neg_prompt_embd = prompt_embd[1:2] # second element
-    liked_prompts_embd = prompt_embd[2:2+len(liked_prompts)]
-    disliked_prompts_embd = prompt_embd[2+len(liked_prompts):]
-    # print("pos_prompt_embd.shape", pos_prompt_embd.shape)
-    # print("liked_prompt_embd.shape", liked_prompts_embd.shape)
-    # prompt_embd = torch.cat([pos_prompt_embd] * batch_size + [neg_prompt_embd] * batch_size + [p.unsqueeze(0) for p in liked_prompts_embd for _ in range(batch_size)] + [p.unsqueeze(0) for p in disliked_prompts_embd for _ in range(batch_size)])
-    # prompt_embd = pack([pos_prompt_embd, neg_prompt_embd, liked_prompts_embd, disliked_prompts_embd])
-    # prompt_embd_old = torch.cat([pos_prompt_embd] * batch_size + [neg_prompt_embd] * batch_size + [p.unsqueeze(0) for p in liked_prompts_embd for _ in range(batch_size)] + [p.unsqueeze(0) for p in disliked_prompts_embd for _ in range(batch_size)])
-    prompt_embd = repeat(prompt_embd, 'prompts a b -> (prompts batch) a b', batch = batch_size)
-    # assert prompt_embd.shape == prompt_embd_old.shape, (prompt_embd.shape, prompt_embd_old.shape)
 
+    if (len(liked_prompts) > 0) != (len(disliked_prompts) > 0):
+        raise ValueError("If you provide liked or disliked prompts, you must provide both")
+
+    all_prompts = [pos_prompt, neg_prompt]
+    if len(liked_prompts) > 0:
+        all_prompts += liked_prompts
+        all_prompts += disliked_prompts
+
+    prompt_tokens = tokenizer(all_prompts, return_tensors="pt", padding=True, truncation=True).to(z.device)
+    text_embd = text_encoder(**prompt_tokens).last_hidden_state
+    pos_prompt_embd = text_embd[:1] # first element
+    neg_prompt_embd = text_embd[1:2] # second element
+    liked_prompts_embd = text_embd[2:2+len(liked_prompts)]
+    disliked_prompts_embd = text_embd[2+len(liked_prompts):]
+
+    prompt_embds = [pos_prompt_embd] * batch_size + [neg_prompt_embd] * batch_size
+    if len(liked_prompts) > 0:
+        prompt_embds += [p.unsqueeze(0) for p in liked_prompts_embd for _ in range(batch_size)]
+        prompt_embds += [p.unsqueeze(0) for p in disliked_prompts_embd for _ in range(batch_size)]
+    prompt_embd = torch.cat(prompt_embds, dim=0)
 
     iterator = scheduler.timesteps
     if show_progress:
@@ -183,10 +188,10 @@ def generate_trajectory_with_binary_feedback(
 
     traj = []
     norms = []
-    for iteration, t in enumerate(iterator):
+    for _, t in enumerate(iterator):
         z = scheduler.scale_model_input(z, t)
-        zs = torch.cat((2+len(liked_prompts)+len(disliked_prompts))*[z], dim=0)
-        assert zs.shape == (batch_size * (2+len(liked_prompts)+len(disliked_prompts)), 4, 64, 64), zs.shape
+        zs = z.repeat(2 + len(liked_prompts) + len(disliked_prompts), 1, 1, 1)
+        assert zs.shape == (batch_size * (2 + len(liked_prompts) + len(disliked_prompts)), 4, 64, 64)
 
         if latent_space == "noise":
             unet_out = unet(zs, t, prompt_embd).sample # layout: pos promt in all samples, neg prompt in all samples, first liked prompt in all samples, second liked prompt in all samples, etc.
@@ -212,61 +217,61 @@ def generate_trajectory_with_binary_feedback(
                 cond_scale = noise_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
                 uncond_scale = noise_uncond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
 
-                for _ in range(flow_steps):
-                    pref_cond = aggregate_latents(
+                if len(liked_prompts) > 0:
+                    for _ in range(flow_steps):
+                        pref_cond = aggregate_latents(
+                            noise_cond,
+                            noise_liked.split(batch_size),
+                            noise_disliked.split(batch_size),
+                            aggregation=aggregation,
+                        )
+                        pref_uncond = aggregate_latents(
+                            noise_uncond,
+                            noise_liked.split(batch_size),
+                            noise_disliked.split(batch_size),
+                            aggregation=aggregation,
+                        )
+                        noise_cond += flow_scale/flow_steps * pref_cond
+                        noise_uncond -= flow_scale/flow_steps * pref_uncond
+
+                    noise_cond *= cond_scale / noise_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                    noise_uncond *= uncond_scale / noise_uncond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+
+                guidance = noise_cond - noise_uncond
+                noise_pred = noise_cond + cfg_scale*guidance
+
+            else:
+                cfg_vector = noise_cond - noise_uncond
+                cfg_norm = cfg_vector.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1)
+
+                if len(liked_prompts) > 0:
+                    preference = aggregate_latents(
                         noise_cond,
                         noise_liked.split(batch_size),
                         noise_disliked.split(batch_size),
                         aggregation=aggregation,
                     )
-                    pref_uncond = aggregate_latents(
-                        noise_uncond,
-                        noise_liked.split(batch_size),
-                        noise_disliked.split(batch_size),
-                        aggregation=aggregation,
-                    )
-                    noise_cond += flow_scale/flow_steps * pref_cond
-                    noise_uncond -= flow_scale/flow_steps * pref_uncond
-
-                # print(noise_cond.norm().item(), noise_uncond.norm().item())
-                noise_cond *= cond_scale / noise_cond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
-                noise_uncond *= uncond_scale / noise_uncond.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
-                guidance = noise_cond - noise_uncond
-                norms.append(guidance.view(batch_size, -1).norm()) 
-                noise_pred = noise_cond + cfg_scale*guidance
-
-            else:
-                preference = aggregate_latents(
-                    noise_cond,
-                    noise_liked.split(batch_size),
-                    noise_disliked.split(batch_size),
-                    aggregation=aggregation,
-                )
-
-                if t >= 400: # i think stepps range from 1000 (first) to 0 (last)
                     # I observed that the norm of the preference vector becomes very large, so I normalize it to the norm of the cfg vector
                     # making the norm equal for both results in very high norms, because the noise_cond is "not happy", therefore it helps allowing the 
                     # preference vector, if happy not to scale up to make the cond unhappy.
                     norms.append((preference.norm().item(), (noise_cond - noise_uncond).norm().item()))
-                    cfg_vector = noise_cond - noise_uncond
-                    pref_norm = preference.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1) + 1e-8
-                    cfg_norm = cfg_vector.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1)
+                    pref_norm = preference.view(batch_size, -1).norm(dim=1).view(batch_size, 1, 1, 1)
+                    
 
                     # scale the cond vector up such that overall we have the same norm than if we would only used the standard cfg
                     preference = preference * (torch.minimum(pref_norm, cfg_norm) / pref_norm).reshape(batch_size, 1, 1, 1)
                     guidance = alpha*preference + (1 - alpha)*cfg_vector
-
-                    # guidance_mag = alpha*pref_norm + (1 - alpha)*cfg_norm
-                    # guidance_norm = guidance.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
-                    # guidance = guidance * (guidance_mag / guidance_norm)
-
-                    # cfg_vec = noise_cond - noise_uncond
-                    # guidance = cfg_vec + beta*preference
-
-                    noise_pred = noise_cond + cfg_scale*guidance
                 else:
-                    # standard cfg
-                    noise_pred = noise_cond + (noise_cond - noise_uncond)*cfg_scale
+                    guidance = cfg_vector
+
+                # guidance_mag = alpha*pref_norm + (1 - alpha)*cfg_norm
+                # guidance_norm = guidance.view(batch_size, -1).norm().view(batch_size, 1, 1, 1)
+                # guidance = guidance * (guidance_mag / guidance_norm)
+
+                # cfg_vec = noise_cond - noise_uncond
+                # guidance = cfg_vec + beta*preference
+
+                noise_pred = noise_cond + cfg_scale*guidance
         elif latent_space == "unet":
             sample, emb, resids, fwd_upsample = unet_encode(unet, zs, t, prompt_embd)
             latent_cond, latent_uncond, latent_pos, latent_neg = torch.tensor_split(sample, [batch_size, 2*batch_size, (2+len(liked_prompts))*batch_size])
