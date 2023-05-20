@@ -113,8 +113,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                     if encoder_hidden_states is not None:
                         print(encoder_hidden_states.shape)
                     hs = torch.cat([hidden_states, cached_hs], dim=1)
-                    out_uncond = self.old_forward(hs)
-                    out_uncond = out_uncond[:, :hidden_states.shape[1]]
+                    out_uncond = self.old_forward(hidden_states, encoder_hidden_states=hs)
                     out_cond = out_uncond.clone()
                     if style_fidelity > 0:
                         # set unconditional image to self-attention only
@@ -165,7 +164,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             torch.manual_seed(seed)
 
         z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
-        # z = torch.load("latents.pt").to(self.device, dtype=self.dtype).unsqueeze(0)
+        z = torch.load("denoiser_input.pt").to(self.device, dtype=self.dtype)
 
         # out = self.pipeline(prompt, guidance_scale=guidance_scale, num_inference_steps=denoising_steps, latents=z)
         # return [out.images]
@@ -176,7 +175,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         neg_images = torch.stack(neg_images).to(self.device, dtype=self.dtype)
         pos_latents = self.vae.config.scaling_factor * self.vae.encode(pos_images).latent_dist.sample()
         neg_latents = self.vae.config.scaling_factor * self.vae.encode(neg_images).latent_dist.sample()
-        # pos_latents = torch.load("latent_hint.pt").to(self.device, dtype=self.dtype)[:1]
+        pos_latents = torch.load("latent_hint.pt").to(self.device, dtype=self.dtype)[:1]
         
         cond_prompt_embd, uncond_prompt_embd = self.initialize_prompts(prompt, negative_prompt)
 
@@ -191,7 +190,11 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         traj = []
         for i, t in enumerate(iterator):
-            z_single = self.scheduler.scale_model_input(z, t)
+            sigma = self.scheduler.sigmas[i]
+            c_in = 1 / (sigma**2 + 1) ** 0.5
+            c_out = -sigma
+
+            z_single = z * c_in
             z_all = torch.cat([z_single] * 2, dim=0)
             batched_prompt_embd = torch.stack([uncond_prompt_embd, cond_prompt_embd], dim=0)
             
@@ -199,7 +202,6 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             z_ref = torch.cat([pos_latents, pos_latents], dim=0)
             # z_ref = torch.cat([pos_latents, neg_latents], dim=0)
             # z_ref = self.scheduler.scale_model_input(z_ref, t)
-            sigma = self.scheduler.sigmas[i]
             alpha_hat = 1 / (sigma**2 + 1)
             noise = torch.randn_like(z_ref)
             z_ref_noised = alpha_hat * z_ref + (1 - alpha_hat) * noise
@@ -214,19 +216,24 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                 cached_hidden_states
             ).sample
             # unet_out = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd).sample
+            # unet_out = torch.load("unet_out.pt").to(self.device, dtype=self.dtype)
 
-            noise_cond, noise_uncond = unet_out.chunk(2)
+            x_out = z + unet_out * c_out
+            noise_cond, noise_uncond = x_out.chunk(2)
+            noise_pred = noise_uncond + guidance_scale * (noise_cond - noise_uncond)
+            noise_pred_scaled = (z - noise_pred) / sigma
+            z = self.scheduler.step(noise_pred_scaled, t, z).prev_sample
 
-            guidance = noise_cond - noise_uncond
-            noise_pred = noise_uncond + guidance_scale * guidance
-
-            z = self.scheduler.step(noise_pred, t, z).prev_sample
+            # noise_cond, noise_uncond = unet_out.chunk(2)
+            # guidance = noise_cond - noise_uncond
+            # noise_pred = noise_uncond + guidance_scale * guidance
+            # z = self.scheduler.step(noise_pred, t, z).prev_sample
 
             if not only_decode_last or i == len(self.scheduler.timesteps) - 1:
                 if i < len(self.scheduler.timesteps) - 1:
                     lats_x0 = (z_single - (1 - alpha_hat)**0.5 * noise_cond) / alpha_hat**0.5
-                    sq_beta_hat = (1 - alpha_hat)**0.5
-                    pred_x0 = sq_beta_hat*lats_x0 + (1 - sq_beta_hat)*z_single
+                    sqrt_beta_hat = (1 - alpha_hat)**0.5
+                    pred_x0 = sqrt_beta_hat*lats_x0 + (1 - sqrt_beta_hat)*z_single
                 else:
                     pred_x0 = z
 

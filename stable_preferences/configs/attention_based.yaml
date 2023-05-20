@@ -1,7 +1,7 @@
 model_version: "1.5"
 #prompt: "Anime drawing of a girl in stylish haute couture outfit in the style of 90's vintage anime, surrealism, masterpiece, best quality, detailed line art, fine details"
-prompt: "a dog running on grassland"
-negative_prompt: "lowres, bad anatomy, bad hands, cropped, worst quality"
+prompt: a dog running on grassland
+negative_prompt: lowres, bad anatomy, bad hands, cropped, worst quality
 #prompt: "masterpiece, best quality"
 unet_max_chunk_size: 4
 n_images: 1
