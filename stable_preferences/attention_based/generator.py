@@ -1,12 +1,11 @@
 import math
 import os
-from typing import Literal, List
+from typing import Literal, List, Optional
 
 import torch
 import torch.nn as nn
 import numpy as np
 from PIL import Image
-from einops import repeat, rearrange, pack, unpack
 from tqdm import tqdm
 from diffusers import StableDiffusionPipeline, DPMSolverSinglestepScheduler, EulerAncestralDiscreteScheduler
 from diffusers.models.attention import BasicTransformerBlock
@@ -103,9 +102,12 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         z_all,
         t,
         batched_prompt_embd,
-        cached_hidden_states,
-        style_fidelity: float = 0.5,
+        cached_hidden_states: Optional[List[torch.Tensor]] = None,
+        style_fidelity: float = 0.8,
     ):
+        if cached_hidden_states is None:
+            return self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd)
+        
         for module in self.unet.modules():
             if isinstance(module, BasicTransformerBlock):
                 def new_forward(self, hidden_states, encoder_hidden_states=None, **kwargs):
@@ -164,18 +166,24 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             torch.manual_seed(seed)
 
         z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
-        z = torch.load("denoiser_input.pt").to(self.device, dtype=self.dtype)
 
         # out = self.pipeline(prompt, guidance_scale=guidance_scale, num_inference_steps=denoising_steps, latents=z)
         # return [out.images]
 
-        pos_images = [self.image_to_tensor(img) for img in liked]
-        neg_images = [self.image_to_tensor(img) for img in disliked]
-        pos_images = torch.stack(pos_images).to(self.device, dtype=self.dtype)
-        neg_images = torch.stack(neg_images).to(self.device, dtype=self.dtype)
-        pos_latents = self.vae.config.scaling_factor * self.vae.encode(pos_images).latent_dist.sample()
-        neg_latents = self.vae.config.scaling_factor * self.vae.encode(neg_images).latent_dist.sample()
-        pos_latents = torch.load("latent_hint.pt").to(self.device, dtype=self.dtype)[:1]
+        if liked and len(liked) > 0:
+            pos_images = [self.image_to_tensor(img) for img in liked]
+            pos_images = torch.stack(pos_images).to(self.device, dtype=self.dtype)
+            pos_latents = self.vae.config.scaling_factor * self.vae.encode(pos_images).latent_dist.sample()
+            # pos_latents = torch.load("latent_hint.pt").to(self.device, dtype=self.dtype)[:1]
+        else:
+            pos_latents = None
+
+        if liked and len(disliked) > 0:
+            neg_images = [self.image_to_tensor(img) for img in disliked]
+            neg_images = torch.stack(neg_images).to(self.device, dtype=self.dtype)
+            neg_latents = self.vae.config.scaling_factor * self.vae.encode(neg_images).latent_dist.sample()
+        else:
+            neg_latents = None
         
         cond_prompt_embd, uncond_prompt_embd = self.initialize_prompts(prompt, negative_prompt)
 
@@ -187,27 +195,39 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         # z = torch.randn(n_images, 4, 64, 64, device=self.device, dtype=self.dtype)
         z = z * self.scheduler.init_noise_sigma
+        # z = torch.load("denoiser_input.pt").to(self.device, dtype=self.dtype)
 
         traj = []
+        print(self.scheduler.sigmas)
         for i, t in enumerate(iterator):
-            sigma = self.scheduler.sigmas[i]
-            c_in = 1 / (sigma**2 + 1) ** 0.5
-            c_out = -sigma
+            if hasattr(self.scheduler, "sigma_t"):
+                sigma = self.scheduler.sigma_t[t]
+            else:
+                sigma = self.scheduler.sigmas[i]
+            alpha_hat = 1 / (sigma**2 + 1)
 
-            z_single = z * c_in
+            z_single = self.scheduler.scale_model_input(z, t)
             z_all = torch.cat([z_single] * 2, dim=0)
             batched_prompt_embd = torch.stack([uncond_prompt_embd, cond_prompt_embd], dim=0)
             
-            # z_ref = torch.cat([pos_latents, z_all[:1]], dim=0)
-            z_ref = torch.cat([pos_latents, pos_latents], dim=0)
-            # z_ref = torch.cat([pos_latents, neg_latents], dim=0)
-            # z_ref = self.scheduler.scale_model_input(z_ref, t)
-            alpha_hat = 1 / (sigma**2 + 1)
-            noise = torch.randn_like(z_ref)
-            z_ref_noised = alpha_hat * z_ref + (1 - alpha_hat) * noise
-            # z_ref_noised = torch.load("ref_xt.pt").to(self.device, dtype=self.dtype)
+            print("z.std():", z.std().item())
+            print("z_all.std():", z_all.std().item())
 
-            cached_hidden_states = self.get_unet_hidden_states(z_ref_noised, t, batched_prompt_embd)
+            if pos_latents is not None:
+                if neg_latents is not None:
+                    z_ref = torch.cat([pos_latents, neg_latents], dim=0)
+                else:
+                    z_ref = torch.cat([pos_latents, pos_latents], dim=0)
+                    
+                noise = torch.randn_like(z_ref)
+                z_ref_noised = alpha_hat**0.5 * z_ref + (1 - alpha_hat)**0.5 * noise
+                # z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
+                # z_ref_noised = torch.load("ref_xt.pt").to(self.device, dtype=self.dtype)
+                print("z_ref.std():", z_ref_noised.std().item())
+
+                cached_hidden_states = self.get_unet_hidden_states(z_ref_noised, t, batched_prompt_embd)
+            else:
+                cached_hidden_states = None
             
             unet_out = self.unet_forward_with_cached_hidden_states(
                 z_all,
@@ -216,26 +236,25 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                 cached_hidden_states
             ).sample
             # unet_out = self.unet(z_all, t, encoder_hidden_states=batched_prompt_embd).sample
-            # unet_out = torch.load("unet_out.pt").to(self.device, dtype=self.dtype)
+            # unet_out = torch.load("unet_out.pt").to(self.device, dtype=self.dtype))
 
-            x_out = z + unet_out * c_out
-            noise_cond, noise_uncond = x_out.chunk(2)
-            noise_pred = noise_uncond + guidance_scale * (noise_cond - noise_uncond)
-            noise_pred_scaled = (z - noise_pred) / sigma
-            z = self.scheduler.step(noise_pred_scaled, t, z).prev_sample
+            x_out = z - sigma * unet_out
+            print("x_out.std():", x_out.std().item())
 
-            # noise_cond, noise_uncond = unet_out.chunk(2)
-            # guidance = noise_cond - noise_uncond
-            # noise_pred = noise_uncond + guidance_scale * guidance
-            # z = self.scheduler.step(noise_pred, t, z).prev_sample
+            # noise_cond, noise_uncond = x_out.chunk(2)
+            # noise_pred = noise_uncond + guidance_scale * (noise_cond - noise_uncond)
+            # noise_pred_scaled = (z - noise_pred) / sigma
+            # z = self.scheduler.step(noise_pred_scaled, t, z).prev_sample
+
+            noise_cond, noise_uncond = unet_out.chunk(2)
+            guidance = noise_cond - noise_uncond
+            noise_pred = noise_uncond + guidance_scale * guidance
+            z = self.scheduler.step(noise_pred, t, z).prev_sample
 
             if not only_decode_last or i == len(self.scheduler.timesteps) - 1:
-                if i < len(self.scheduler.timesteps) - 1:
-                    lats_x0 = (z_single - (1 - alpha_hat)**0.5 * noise_cond) / alpha_hat**0.5
-                    sqrt_beta_hat = (1 - alpha_hat)**0.5
-                    pred_x0 = sqrt_beta_hat*lats_x0 + (1 - sqrt_beta_hat)*z_single
-                else:
-                    pred_x0 = z
+                lats_x0 = (z_single - (1 - alpha_hat)**0.5 * noise_cond) / alpha_hat**0.5
+                sqrt_beta_hat = (1 - alpha_hat)**0.5
+                pred_x0 = sqrt_beta_hat*lats_x0 + (1 - sqrt_beta_hat)*z_single
 
                 y = self.pipeline.decode_latents(pred_x0)
                 piled = self.pipeline.numpy_to_pil(y)

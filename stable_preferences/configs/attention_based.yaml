@@ -1,18 +1,21 @@
 model_version: "1.5"
-#prompt: "Anime drawing of a girl in stylish haute couture outfit in the style of 90's vintage anime, surrealism, masterpiece, best quality, detailed line art, fine details"
-prompt: a dog running on grassland
+# prompt: "Anime drawing of a girl in stylish haute couture outfit in the style of 90's vintage anime, surrealism, masterpiece, best quality, detailed line art, fine details"
+prompt: 1girl, anime drawing of a girl, side view, stylish haute couture, masterpiece, best quality, fine details, extremely detailed face
+# prompt: a dog running on grassland
+# prompt: "masterpiece, best quality"
 negative_prompt: lowres, bad anatomy, bad hands, cropped, worst quality
-#prompt: "masterpiece, best quality"
 unet_max_chunk_size: 4
 n_images: 1
 denoising_steps: 20
-seed: 4
-liked_images: 
-    #- static/textual_inversion/example_01.png
-    - static/textual_inversion/example_03.png
+seed: 37
+liked_images:
+    - static/textual_inversion/example_01.png
+    # - static/textual_inversion/example_03.png
     # - static/textual_inversion/187265575_screenshot_of_howl_s_moving_castle_by_hayao_miyazaki__studio_ghibli__drawing_of_a_castle_in_the_moun.png
 disliked_images:
-    - static/textual_inversion/image_107_0.png
+    # - static/textual_inversion/example_01.png
+    # - static/textual_inversion/image_107_0.png
+    - static/generated/example_02.png
 binary_feedback_type: image_direct
 
 field:

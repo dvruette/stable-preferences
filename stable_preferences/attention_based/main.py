@@ -29,8 +29,8 @@ def main(ctx: DictConfig):
     trajectory = generator.generate(
         prompt=ctx.prompt,
         negative_prompt=ctx.negative_prompt,
-        liked=list(ctx.liked_images),
-        disliked=list(ctx.disliked_images),
+        liked=list(ctx.liked_images) if ctx.liked_images else [],
+        disliked=list(ctx.disliked_images) if ctx.disliked_images else [],
         field=ctx.field.field_type,
         binary_feedback_type=ctx.binary_feedback_type,
         seed=ctx.seed,

@@ -6,7 +6,7 @@ matplotlib
 pillow
 torchvision==0.15.1
 accelerate
-xformers
+# xformers
 transformers==4.27.1
 hydra-core
 omegaconf
