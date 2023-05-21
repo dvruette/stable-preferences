@@ -26,7 +26,7 @@ def pap_score(image_path, description):
     print(
         f"Calculating PAP score for image {image_path} and description '{description}'"
     )
-    return measure.compute_from_paths(description, [image_path]).item()
+    return measure.compute_from_paths(description, [image_path])
 
 
 def analyze(args):
@@ -41,7 +41,7 @@ def analyze(args):
     if args.pap:
         results["pick_a_pick_score"] = pap_score(args.image_path, args.prompt)
 
-    print(results)
+    print(f"---\nScores:\n{results}")
     return results
 
 
