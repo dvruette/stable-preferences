@@ -1,32 +1,25 @@
 model_version: "1.5"
-prompt: "Photo of a cat riding on a bicycle."
+prompt: "Elsa, d & d, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, matte, sharp focus, illustration, hearthstone, art by artgerm and greg rutkowski and alphonse mucha, 8k"
 unet_max_chunk_size: 8
 n_images: 2
 denoising_steps: 50
 seed: 4259
 liked_prompts: 
-    - "a beautiful sunset"
-    - "a high-res portrait of a cat"
-    - "best quality, extremely detailed"
-    # - "brown cat"
-    # - "a beautiful sunset"
-    # - "a high-res portrait of a cat"
+    - "strong warrior princess| centered| key visual| intricate| highly detailed| breathtaking beauty| precise lineart| vibrant| comprehensive cinematic| Carne Griffiths| Conrad Roset"
+    - "sango fantasy, fantasy magic, , intricate, sharp focus, illustration, highly detailed, digital painting, concept art, matte, Artgerm and Paul lewin and kehinde wiley, masterpiece"
 disliked_prompts: 
     - "longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"
-    # - "asphalt road"
-    # - "a birds eye view of a city"
 binary_feedback_type: prompt  # or "image_inversion" or "image_direct"
 
 field:
-    field_type: smoothed_inverse_polynomial  # or "constant_direction"
-    guidance_scale: 9
-    walk_distance: 0.0 # only for post or pre guidance
+    field_type: inverse_exponential  # or "constant_direction"
+    walk_type: "joint"
     walk_steps: 100
+additional_args:  # additional parameters specifically for the field and space
     flatten_channels: true
     preference_portion: 0.5
-    walk_type: "joint"
-additional_args:  # additional parameters specifically for the field and space
-    clip_preference_vec: false
-    kernel_function: inv_square
-    smoothing_strength: 1.0
-    poly_coefficient: 4.0
+    guidance_scale: 9
+    # clip_preference_vec: false
+    # smoothing_strength: 1.0
+    # poly_coefficient: 4.0
+    exp_coefficient: 0.01
