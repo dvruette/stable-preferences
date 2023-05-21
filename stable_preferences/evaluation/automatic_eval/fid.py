@@ -1,53 +1,56 @@
 import torch
-import torchvision.transforms as transforms
+import os
 from PIL import Image
-from openai import CLIP
-from scipy.linalg import sqrtm
+from torchvision.transforms import ToTensor
+from torchmetrics.image.fid import FrechetInceptionDistance
 
 
-class FIDScore:
+class ImageFID:
     """
-    Frechet Inception Distance (FID) is a metric to measure the distance between two distributions of images.
+    Compute Frechet Inception Distance (FID) from images.
     """
 
-    def __init__(self, clip_model="ViT-B/32", device="cpu"):
-        if not device:
-            self.device = "mps" if torch.backends.mps.is_available() else "cpu"
-            self.device = "cuda" if torch.cuda.is_available() else self.device
-        else:
-            self.device = device
-        self.model, self.preprocess = CLIP.load(clip_model, device=self.device)
+    def __init__(self, feature=64):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.fid = FrechetInceptionDistance(feature=feature).to(device)
+        self.device = device
 
-    def get_image_features(self, image_paths):
-        features = []
-        for image_path in image_paths:
-            image = Image.open(image_path).convert("RGB")
-            image_tensor = self.preprocess(image).unsqueeze(0).to(self.device)
-            with torch.no_grad():
-                image_features, _ = self.model.encode_image(image_tensor)
-            features.append(image_features.cpu().numpy())
-        return torch.tensor(features).squeeze()
+    def compute_from_directory(self, directory, real=True):
+        """
+        ::param directory: str
+        ::param real: bool
+        ::return: float
+        """
+        image_paths = [
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if f.endswith(("jpg", "png", "jpeg"))
+        ]
+        images = [Image.open(image_path) for image_path in image_paths]
+        tensor_images = torch.stack([ToTensor()(img) for img in images]).to(self.device)
 
-    def compute_fid_score(self, image_paths1, image_paths2):
-        features1 = self.get_image_features(image_paths1)
-        features2 = self.get_image_features(image_paths2)
+        self.fid.update(tensor_images, real=real)
+        return self.fid.compute()
 
-        mu1, mu2 = features1.mean(0), features2.mean(0)
-        sigma1, sigma2 = torch.cov(features1, rowvar=False), torch.cov(
-            features2, rowvar=False
-        )
-
-        diff = mu1 - mu2
-        covmean, _ = sqrtm(sigma1.numpy().dot(sigma2.numpy()), disp=False)
-        covmean = torch.from_numpy(covmean).float()
-
-        fid = diff.dot(diff) + torch.trace(sigma1 + sigma2 - 2 * covmean)
-        return fid.item()
+    def compute_from_tensor(self, images, real=True):
+        """
+        ::param images: torch.Tensor
+        ::param real: bool
+        ::return: float
+        """
+        self.fid.update(images.to(self.device), real=real)
+        return self.fid.compute()
 
 
-# Example usage
-fid_calculator = FIDScore()
-image_paths1 = ["path/to/your/image1A.jpg", "path/to/your/image2A.jpg"]
-image_paths2 = ["path/to/your/image1B.jpg", "path/to/your/image2B.jpg"]
-fid_score = fid_calculator.compute_fid_score(image_paths1, image_paths2)
-print("FID Score:", fid_score)
+# Computing FID from a directory of images
+fid_computer = ImageFID()
+fid_score = fid_computer.compute_from_directory("/path/to/your/directory", real=True)
+print(fid_score)
+
+# Computing FID from a tensor of images
+imgs_dist1 = torch.randint(0, 200, (100, 3, 299, 299), dtype=torch.uint8)
+imgs_dist2 = torch.randint(100, 255, (100, 3, 299, 299), dtype=torch.uint8)
+fid_computer = ImageFID()
+fid_computer.compute_from_tensor(imgs_dist1, real=True)
+fid_score = fid_computer.compute_from_tensor(imgs_dist2, real=False)
+print(fid_score)

@@ -1,32 +1,67 @@
-import torch
+import argparse
 
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-DEVICE = "cuda" if torch.cuda.is_available() else DEVICE
-print("DEVICE:", DEVICE)
+from stable_preferences.evaluation.automatic_eval.directional_similarity import (
+    DirectionalSimilarity,
+)
+from stable_preferences.evaluation.automatic_eval.clip_score import ClipScore
+from stable_preferences.evaluation.automatic_eval.hps import HumanPreferenceScore
 
-#
-# CLIP
-#
 
-from stable_preferences.evaluation.automatic.clip_score import ClipScore
+def clip_score(image_path, description):
+    measure = ClipScore()
+    print(
+        f"Calculating CLIP score for image {image_path} and description '{description}'"
+    )
+    return measure.compute_clip_score_from_path(image_path, description)
 
-example_paths = [
-    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/example_1.png",
-    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/example_2.png",
-    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/example_3.png",
-    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/static/example_img/dot matrix beautiful swooping kingfisher unsplash monstrous tesselated surreal eldritch chiaroscuro HDR enchanted mystical whimsical bold artwork by leonid afremov and lois van baarle.png",
-]
 
-PROMPT = "a photo of an astronaut riding a horse on mars"
+def hpc_score(image_path, description):
+    measure = HumanPreferenceScore(weight_path="./resources/hpc.pt")
+    print(
+        f"Calculating HPC score for image {image_path} and description '{description}'"
+    )
+    return measure.compute_from_paths(description, [image_path]).item()
 
-# compute the CLIP score for each image
 
-clip_score_calculator = ClipScore()
-scores = [
-    clip_score_calculator.compute_clip_score_from_path(path, PROMPT)
-    for path in example_paths
-]
+def pap_score(image_path, description):
+    # This function should be replaced with actual pap score calculation.
+    print(
+        f"Calculating PAP score for image {image_path} and description '{description}'"
+    )
+    return 0
 
-# print the scores
-for i, (path, score) in enumerate(zip(example_paths, scores)):
-    print(f"CLIP Score for image {i}:", score)
+
+def aesthetic_score(image_path, description):
+    # This function should be replaced with actual aesthetic score calculation.
+    print(
+        f"Calculating Aesthetic score for image {image_path} and description '{description}'"
+    )
+    return 0
+
+
+def analyze(args):
+    results = dict()
+
+    if args.clip:
+        results["clip_score"] = clip_score(args.image_path, args.prompt)
+
+    if args.hpc:
+        results["human_preference_score"] = hpc_score(args.image_path, args.prompt)
+
+    if args.pap:
+        results["pick_a_pick_score"] = pap_score(args.image_path, args.prompt)
+
+    print(results)
+    return results
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--image_path", help="Path to the image.")
+    parser.add_argument("--prompt", help="Description used to generate the image.")
+    parser.add_argument("--clip", action="store_true", help="Calculate CLIP score.")
+    parser.add_argument("--hpc", action="store_true", help="Calculate HPC score.")
+    parser.add_argument("--pap", action="store_true", help="Calculate PAP score.")
+
+    args = parser.parse_args()
+    analyze(args)

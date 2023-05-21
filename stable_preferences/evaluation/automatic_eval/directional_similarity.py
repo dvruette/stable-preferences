@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 DEVICE = "cuda" if torch.cuda.is_available() else DEVICE
+print(f"Directional Similarity: using {DEVICE}")
 
 
 class DirectionalSimilarity(nn.Module):
@@ -82,7 +83,7 @@ class DirectionalSimilarity(nn.Module):
             truncation=True,
             return_tensors="pt",
         )
-        return {"input_ids": inputs.input_ids.to(device)}
+        return {"input_ids": inputs.input_ids.to(DEVICE)}
 
     def encode_image(self, image: Image.Image) -> torch.Tensor:
         """
@@ -167,10 +168,10 @@ directional_similarity_calculator = DirectionalSimilarity(
 )
 
 image_one = Image.open(
-    "/Users/lukas/Desktop/projects/diffusion/stable-preferences/example_1.png"
+    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/example_1.png"
 ).convert("RGB")
 image_two = Image.open(
-    "/Users/lukas/Desktop/projects/diffusion/stable-preferences/example_2.png"
+    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/example_2.png"
 ).convert("RGB")
 caption_one = "An astronaut on mars"
 caption_two = "An astronaut on a horse on mars"
