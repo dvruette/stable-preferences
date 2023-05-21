@@ -10,13 +10,13 @@ We can currently evaluate w
 
 (1) In order to run the evaluation scores on a single image with its corresponding generating description, run:
 ```
-python eval.py --image_path /path/to/image --prompt "Image description" --clip --hpc --pap
+python eval.py --image_path /path/to/image --prompt "Image description" --clip --hps --pap
 ```
 
 The currently available evaluation metrics are 
 ```
 --clip : standard clip score 
---hpc : human preference score trained on the Discord interactions
+--hps : human preference score trained on the Discord interactions
 --pap : pick-a-pic score trained on the pick-a-pic dataset
 ```
 

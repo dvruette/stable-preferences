@@ -14,7 +14,7 @@ class HumanPreferenceScore:
         device = "cuda" if torch.cuda.is_available() else device
         self.model, self.preprocess = clip.load("ViT-L/14", device=device)
         params = torch.load(
-            os.path.join(weight_path, "hpc.pt"),
+            weight_path,
             map_location=device,
         )["state_dict"]
         self.model.load_state_dict(params)
