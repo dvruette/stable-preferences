@@ -8,7 +8,7 @@ The human preference dataset is available [here](https://mycuhk-my.sharepoint.co
 stable-preferences/human_preference_dataset/utils.py
 ```
 
-We can currently evaluate w
+We can currently evaluate:
 1. Single image with prompt {clip, hpc, pap}-scores
 2. Directional similarity of img_1 + prompt_1 to img_2 + prompt_2
 3. FID from set of generated to set of real images
