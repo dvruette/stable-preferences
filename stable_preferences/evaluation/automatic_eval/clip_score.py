@@ -7,7 +7,7 @@ from functools import partial
 
 
 class ClipScore:
-    def __init__(self, clip_model: str = "ViT-B/32", device: str = "cpu") -> None:
+    def __init__(self, clip_model: str = "ViT-B/32", device: str = None) -> None:
         """
         Initialize the ClipScore class.
 
@@ -42,7 +42,7 @@ class ClipScore:
         image_tensor = (self.preprocess(image).unsqueeze(0).to(self.device) * 255).type(
             torch.uint8
         )
-        print(image_tensor.shape)
+        # print(image_tensor.shape)
 
         clip_score = self.clip_score_fn(image_tensor, text_prompt).detach()
         return float(clip_score)
