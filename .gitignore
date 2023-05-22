@@ -22,3 +22,4 @@ human_preference_dataset/weights
 human_preference_dataset/adapted_model
 
 data
+fields_old.py

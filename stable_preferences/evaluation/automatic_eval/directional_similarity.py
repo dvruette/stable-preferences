@@ -10,14 +10,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else DEVICE
+print(f"Directional Similarity: using {DEVICE}")
+
 
 class DirectionalSimilarity(nn.Module):
     def __init__(
         self,
-        tokenizer: CLIPTokenizer,
-        text_encoder: CLIPTextModelWithProjection,
-        image_processor: CLIPImageProcessor,
-        image_encoder: CLIPVisionModelWithProjection,
+        tokenizer: CLIPTokenizer = None,
+        text_encoder: CLIPTextModelWithProjection = None,
+        image_processor: CLIPImageProcessor = None,
+        image_encoder: CLIPVisionModelWithProjection = None,
     ):
         """
         Initialize the DirectionalSimilarity class with the specified tokenizer, text_encoder,
@@ -29,10 +33,31 @@ class DirectionalSimilarity(nn.Module):
         :param image_encoder: The image encoder to encode the images.
         """
         super().__init__()
-        self.tokenizer = tokenizer
-        self.text_encoder = text_encoder
-        self.image_processor = image_processor
-        self.image_encoder = image_encoder
+
+        if not tokenizer:
+            self.tokenizer = CLIPTokenizer.from_pretrained(
+                "openai/clip-vit-large-patch14"
+            )
+        else:
+            self.tokenizer = tokenizer
+        if not text_encoder:
+            self.text_encoder = CLIPTextModelWithProjection.from_pretrained(
+                "openai/clip-vit-large-patch14"
+            ).to(DEVICE)
+        else:
+            self.text_encoder = text_encoder
+        if not image_processor:
+            self.image_processor = CLIPImageProcessor.from_pretrained(
+                "openai/clip-vit-large-patch14"
+            )
+        else:
+            self.image_processor = image_processor
+        if not image_encoder:
+            self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(
+                "openai/clip-vit-large-patch14"
+            ).to(DEVICE)
+        else:
+            self.image_encoder = image_encoder
 
     def preprocess_image(self, image: Image.Image) -> dict:
         """
@@ -42,7 +67,7 @@ class DirectionalSimilarity(nn.Module):
         :return: A dictionary containing the preprocessed image tensor.
         """
         image = self.image_processor(image, return_tensors="pt")["pixel_values"]
-        return {"pixel_values": image.to(device)}
+        return {"pixel_values": image.to(DEVICE)}
 
     def tokenize_text(self, text: str) -> dict:
         """
@@ -58,7 +83,7 @@ class DirectionalSimilarity(nn.Module):
             truncation=True,
             return_tensors="pt",
         )
-        return {"input_ids": inputs.input_ids.to(device)}
+        return {"input_ids": inputs.input_ids.to(DEVICE)}
 
     def encode_image(self, image: Image.Image) -> torch.Tensor:
         """
@@ -132,20 +157,24 @@ class DirectionalSimilarity(nn.Module):
 
 
 # Example usage
-clip_id = "openai/clip-vit-large-patch14"
-tokenizer = CLIPTokenizer.from_pretrained(clip_id)
-text_encoder = CLIPTextModelWithProjection.from_pretrained(clip_id).to(device)
-image_processor = CLIPImageProcessor.from_pretrained(clip_id)
-image_encoder = CLIPVisionModelWithProjection.from_pretrained(clip_id).to(device)
+# clip_id = "openai/clip-vit-large-patch14"
+# tokenizer = CLIPTokenizer.from_pretrained(clip_id)
+# text_encoder = CLIPTextModelWithProjection.from_pretrained(clip_id).to(device)
+# image_processor = CLIPImageProcessor.from_pretrained(clip_id)
+# image_encoder = CLIPVisionModelWithProjection.from_pretrained(clip_id).to(device)
 
 directional_similarity_calculator = DirectionalSimilarity(
-    tokenizer, text_encoder, image_processor, image_encoder
+    # tokenizer, text_encoder, image_processor, image_encoder
 )
 
-image_one = Image.open("path/to/your/image1.jpg").convert("RGB")
-image_two = Image.open("path/to/your/image2.jpg").convert("RGB")
-caption_one = "Caption for image one"
-caption_two = "Caption for image two"
+image_one = Image.open(
+    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/example_1.png"
+).convert("RGB")
+image_two = Image.open(
+    "/nese/mit/group/evlab/u/luwo/projects/projects/stable-preferences/example_2.png"
+).convert("RGB")
+caption_one = "An astronaut on mars"
+caption_two = "An astronaut on a horse on mars"
 
 directional_similarity = directional_similarity_calculator(
     image_one, image_two, caption_one, caption_two

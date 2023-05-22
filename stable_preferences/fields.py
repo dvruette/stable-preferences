@@ -3,21 +3,19 @@ from typing import Literal
 
 import torch
 import torch.nn.functional as F
-from einops import repeat, rearrange, pack, unpack
+from einops import repeat, rearrange, pack, unpack, einsum
 from torch.nn.functional import normalize
+
+printed_already = False
 
 def walk_in_field(
     latent_uncond_batch: torch.Tensor,
     latent_cond_batch: torch.Tensor,
     field_points_pos: torch.Tensor,
     field_points_neg: torch.Tensor,
-    field_type: Literal["constant_direction", "kernel"] = "throw error",
-    walk_distance: float = "throw error",
-    guidance_scale: float = "throw error",
-    walk_type: Literal["pre_guidance", "joint", "post_guidance"] = "throw error",
-    n_steps: int = "throw error",
-    flatten_channels = "error",
-    preference_portion: float = "throw error",
+    field_type: Literal["constant_direction", "kernel"],
+    n_steps: int,
+    walk_type: Literal["pre_guidance", "joint", "post_guidance"],
     **kwargs,  # any further arguments that are needed for the field type
 ):
     """
@@ -29,12 +27,13 @@ def walk_in_field(
 
     format of field_points_pos (written in einops format): [batch liked_points a b c]
     """
+    flatten_channels = kwargs.get("flatten_channels", True)
     assert latent_uncond_batch.shape == latent_cond_batch.shape, "latent_uncond_batch and latent_cond_batch must have the same shape"
     ### flatten all dimensions except the batch dimension
     original_shape = latent_cond_batch.shape
     batch_size, num_channels = latent_cond_batch.shape[:2]
 
-    if flatten_channels:
+    if flatten_channels: # default is to flatten channels
         latent_uncond_batch = latent_uncond_batch.reshape(batch_size, -1)
         latent_cond_batch = latent_cond_batch.reshape(batch_size, -1) 
         field_points_pos = rearrange(field_points_pos, "batch liked_points a b c -> batch liked_points (a b c)")
@@ -52,6 +51,8 @@ def walk_in_field(
         step_fn = functools.partial(kernel_step, field_type=field_type, **kwargs)
     elif field_type == "smoothed_inverse_polynomial":
         step_fn = functools.partial(normalized_field_step, field_type=field_type, **kwargs)
+    elif field_type == "inverse_exponential":
+        step_fn = functools.partial(normalized_exp_field_step, **kwargs)
     else:
         raise NotImplementedError(f"Field type {field_type} not implemented.")
     
@@ -67,11 +68,19 @@ def walk_in_field(
     )
     
     if len(field_points_pos) == 0 or len(field_points_neg) == 0:
-        print("Warning: No positive points or no negative points. Using conditional directions only. Ignoring all liked and disliked images.")
+        guidance_scale = kwargs.get("guidance_scale", kwargs.get("walk_distance", None))
+        global printed_already
+        if not printed_already:
+            print(f"Warning: No positive points or no negative points. Using conditional directions only (guidance scale {guidance_scale}). Ignoring all liked and disliked images.")
+            printed_already = True
         output = latent_cond_batch + guidance_scale * (latent_cond_batch - latent_uncond_batch)
         return output.reshape(original_shape)
 
     if walk_type == "joint":
+        guidance_scale = kwargs.get("guidance_scale", None)
+        preference_portion = kwargs.get("preference_portion", None)
+        if preference_portion is None or guidance_scale is None:
+            raise ValueError("preference_portion and guidance_scale must be specified for joint walk type.")
         step_size = guidance_scale / n_steps
         walking_points = latent_cond_batch.clone().detach()
         for _ in range(n_steps):
@@ -82,6 +91,10 @@ def walk_in_field(
             walking_points =  walking_points + step_size * walk_direction
         output = walking_points
     elif walk_type == "pre_guidance":
+        walk_distance = kwargs.get("walk_distance", None)
+        guidance_scale = kwargs.get("guidance_scale", None)
+        if walk_distance is None or guidance_scale is None:
+            raise ValueError("walk_distance and guidance_scale must be specified for pre_guidance walk type.")
         step_size = walk_distance / n_steps
         cond_scale = latent_cond_batch.norm(dim=-1, keepdim=True)
         uncond_scale = latent_uncond_batch.norm(dim=-1, keepdim=True)
@@ -99,6 +112,10 @@ def walk_in_field(
         guidance = latent_cond_batch - latent_uncond_batch
         output = latent_cond_batch + guidance_scale * guidance
     elif walk_type == "post_guidance":
+        walk_distance = kwargs.get("walk_distance", None)
+        guidance_scale = kwargs.get("guidance_scale", None)
+        if walk_distance is None or guidance_scale is None:
+            raise ValueError("walk_distance and guidance_scale must be specified for post_guidance walk type.")
         step_size = guidance_scale * walk_distance / n_steps
         guidance = latent_cond_batch - latent_uncond_batch
         walk_points = latent_cond_batch + guidance_scale * guidance
@@ -233,7 +250,10 @@ def normalized_field_step(
         walk_direction_preference = normalize(-summed_pot_grad)
         # walk_direction = preference_portion * walk_direction_preference + (1-preference_portion) * conditional_directions
     else:
-        print('Warning: No conditional points or no unconditional points. Using conditional directions only. Ignoring all liked and disliked images.')
+        global printed_already
+        if not printed_already:
+            print('Warning: No conditional points or no unconditional points. Using conditional directions only. Ignoring all liked and disliked images.')
+            printed_already = True
         walk_direction_preference = conditional_directions
     return walk_direction_preference
 
@@ -259,3 +279,39 @@ def smoothed_inverse_potential(smoothing_radius, distance_strength):
         inv_walk_direction = (x-p_i) * (1/(d**distance_strength+smoothing_radius)).reshape(-1,1)
         return inv_walk_direction
     return potential_grad
+
+
+def normalized_exp_field_step(
+        walking_points,
+        latent_uncond_points,
+        latent_cond_points,
+        field_points_pos,
+        field_points_neg,
+        **kwargs
+    ):
+    """
+    Take one step in a polynomial field of the form SUM_i |x-p_i|^coefficient
+    """
+    coefficient = kwargs['exp_coefficient']
+    field_points_pos = rearrange(field_points_pos, 'batch liked_points a -> liked_points batch a')
+    field_points_neg = rearrange(field_points_neg, 'batch disliked_points a -> disliked_points batch a')
+    conditional_directions = latent_cond_points - latent_uncond_points
+    summed_pot_grad = torch.zeros_like(conditional_directions)
+    logits = []
+    logits = []
+    walk_directions = []
+    for p_i in field_points_pos:
+        logits.append(-torch.norm(walking_points-p_i, dim=1)**2*coefficient)
+        walk_directions.append(p_i-walking_points)
+    for p_i in field_points_neg:
+        logits.append(-torch.norm(walking_points-p_i, dim=1)**2*coefficient)
+        walk_directions.append(walking_points-p_i)
+    # every element in logits_pos is a tensor of shape (batch_size, ) and contains the logits for the corresponding point
+    logits, _ = pack(logits, 'batch *')
+    walk_directions, _ = pack(walk_directions, 'batch * d')
+    probs = F.softmax(logits, dim=1)
+    walk_direction_preference = einsum(probs, walk_directions, 'batch points, batch points d -> batch d')
+    walk_direction_preference = normalize(walk_direction_preference)
+    # walk_direction = preference_portion * walk_direction_preference + (1-preference_portion) * conditional_directions
+
+    return walk_direction_preference
