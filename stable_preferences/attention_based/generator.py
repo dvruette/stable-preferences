@@ -230,7 +230,11 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         guidance_scale: float = 8.0,
         denoising_steps: int = 20,
         only_decode_last: bool = False,
-        feedback_scale: Tuple[float, float] = (0.0, 0.75),
+        feedback_scale: Tuple[float, float] = (0.25, 0.75),
+        min_feedback_weight: float = 0.1,
+        max_feedback_weight: float = 1.0,
+        pos_weights=(0.7, 0.7),
+        neg_weights=(0.4, 0.4),
     ):
         """
         Generate a trajectory of images with binary feedback.
@@ -293,8 +297,16 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                 z_single = self.scheduler.scale_model_input(z, t)
                 z_all = torch.cat([z_single] * 2, dim=0)
                 z_ref = torch.cat([pos_latents, neg_latents], dim=0)
+
                 
-                if i >= ref_start_idx and i <= ref_end_idx and z_ref.size(0) > 0:
+                if i >= ref_start_idx and i <= ref_end_idx:
+                    pos_ws = tuple(max_feedback_weight * w for w in pos_weights)
+                    neg_ws = tuple(max_feedback_weight * w for w in neg_weights)
+                else:
+                    pos_ws = tuple(min_feedback_weight * w for w in pos_weights)
+                    neg_ws = tuple(min_feedback_weight * w for w in neg_weights)
+
+                if z_ref.size(0) > 0:
                     noise = torch.randn_like(z_ref)
                     if isinstance(self.scheduler, EulerAncestralDiscreteScheduler):
                         z_ref_noised = alpha_hat**0.5 * z_ref + (1 - alpha_hat)**0.5 * noise
@@ -324,9 +336,11 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                 unet_out = self.unet_forward_with_cached_hidden_states(
                     z_all,
                     t,
-                    batched_prompt_embd,
-                    cached_pos_hs,
-                    cached_neg_hs,
+                    prompt_embd=batched_prompt_embd,
+                    cached_pos_hiddens=cached_pos_hs,
+                    cached_neg_hiddens=cached_neg_hs,
+                    pos_weights=pos_ws,
+                    neg_weights=neg_ws,
                 ).sample
 
                 noise_cond, noise_uncond = unet_out.chunk(2)
