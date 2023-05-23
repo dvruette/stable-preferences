@@ -59,37 +59,37 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
     def __init__(self,
             model_ckpt: Optional[str] = None,
+            model_name: Optional[str] = None,
             stable_diffusion_version: str = "1.5",
             unet_max_chunk_size=8,
             torch_dtype=torch.float32,
         ):
         super().__init__()
-        if stable_diffusion_version == "1.5":
-            model_name = "runwayml/stable-diffusion-v1-5"
-        elif stable_diffusion_version == "2.1":
-            model_name = "stabilityai/stable-diffusion-2-1"
-        else:
-            raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version must be either '1.5' or '2.1'")
+        if model_name is None:
+            if stable_diffusion_version == "1.5":
+                model_name = "runwayml/stable-diffusion-v1-5"
+            elif stable_diffusion_version == "2.1":
+                model_name = "stabilityai/stable-diffusion-2-1"
+            else:
+                raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version must be either '1.5' or '2.1'")
 
         # scheduler = DPMSolverMultistepScheduler.from_pretrained(model_name, subfolder="scheduler")
-        # scheduler = EulerAncestralDiscreteScheduler.from_pretrained(model_name, subfolder="scheduler")
+        scheduler = EulerAncestralDiscreteScheduler.from_pretrained(model_name, subfolder="scheduler")
         # scheduler = DDIMScheduler.from_pretrained(model_name, subfolder="scheduler")
         # scheduler = DDPMScheduler.from_pretrained(model_name, subfolder="scheduler")
 
-        if model_ckpt is None:
-            # pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype, safety_checker=None)
-            pipe = StableDiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype, safety_checker=None)
+        if model_ckpt is not None:
+            pipe = StableDiffusionPipeline.from_ckpt(model_ckpt, scheduler=scheduler, torch_dtype=torch_dtype, safety_checker=None)
+            pipe.scheduler = scheduler
         else:
-            # pipe = StableDiffusionPipeline.from_ckpt(model_ckpt, scheduler=scheduler, torch_dtype=torch_dtype, safety_checker=None)
-            pipe = StableDiffusionPipeline.from_ckpt(model_ckpt, torch_dtype=torch_dtype, safety_checker=None)
-
+            pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype, safety_checker=None)
 
         self.pipeline = pipe
         self.unet = pipe.unet
         self.vae = pipe.vae
         self.text_encoder = pipe.text_encoder
         self.tokenizer = pipe.tokenizer
-        self.scheduler = pipe.scheduler
+        self.scheduler = scheduler
 
         print(f"Unet: {sum(p.numel() for p in self.unet.parameters()) / 1e6:.0f}M")
         print(f"VAE: {sum(p.numel() for p in self.vae.parameters()) / 1e6:.0f}M")
@@ -158,7 +158,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         cached_pos_hiddens: Optional[List[torch.Tensor]] = None,
         cached_neg_hiddens: Optional[List[torch.Tensor]] = None,
         pos_weights=(1.0, 1.0),
-        neg_weights=(0.0, 0.0),
+        neg_weights=(0.5, 0.8),
         # style_fidelity: float = 0.33,
     ):
         if cached_pos_hiddens is None and cached_neg_hiddens is None:
@@ -299,10 +299,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                         z_ref_noised = alpha_hat**0.5 * z_ref + (1 - alpha_hat)**0.5 * noise
                     else:
                         z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
-                    ref_prompt_embd = torch.cat([cond_prompt_embd] * pos_latents.size(0) + [uncond_prompt_embd] * neg_latents.size(0), dim=0)
-                    # ref_prompt_embd = torch.cat([cond_prompt_embd] * (pos_latents.size(0) + neg_latents.size(0)), dim=0)
-                    # ref_prompt_embd = torch.cat([uncond_prompt_embd] * (pos_latents.size(0) + neg_latents.size(0)), dim=0)
-                    # ref_prompt_embd = torch.cat([null_prompt_embd] * (pos_latents.size(0) + neg_latents.size(0)), dim=0)
+                    # ref_prompt_embd = torch.cat([cond_prompt_embd] * pos_latents.size(0) + [null_prompt_embd] * neg_latents.size(0), dim=0)
+                    ref_prompt_embd = torch.cat([cond_prompt_embd] * (pos_latents.size(0) + neg_latents.size(0)), dim=0)
 
                     cached_hidden_states = self.get_unet_hidden_states(z_ref_noised, t, ref_prompt_embd)
 

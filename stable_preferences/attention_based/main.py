@@ -46,6 +46,7 @@ def main(ctx: DictConfig):
 
     generator = StableDiffuserWithAttentionFeedback(
         model_ckpt=ctx.model_ckpt if hasattr(ctx, "model_ckpt") else None,
+        model_name=ctx.model_name if hasattr(ctx, "model_name") else None,
         stable_diffusion_version=ctx.model_version,
         unet_max_chunk_size=ctx.unet_max_chunk_size,
         torch_dtype=dtype,
