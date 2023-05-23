@@ -158,7 +158,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         cached_pos_hiddens: Optional[List[torch.Tensor]] = None,
         cached_neg_hiddens: Optional[List[torch.Tensor]] = None,
         pos_weights=(1.0, 1.0),
-        neg_weights=(0.5, 0.8),
+        neg_weights=(0.5, 0.5),
         # style_fidelity: float = 0.33,
     ):
         if cached_pos_hiddens is None and cached_neg_hiddens is None:

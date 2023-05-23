@@ -4,23 +4,23 @@ model_version: "1.5"
 model_name: dreamlike-art/dreamlike-photoreal-2.0
 # prompt: Anime drawing of a girl in stylish haute couture outfit in the style of 90's vintage anime, surrealism, masterpiece, best quality, detailed line art, fine details
 # prompt: 1girl, anime drawing of a girl, side view, stylish haute couture, masterpiece, best quality, fine details, extremely detailed face
-prompt: Elsa, d & d, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, matte, sharp focus, illustration, hearthstone, art by artgerm and greg rutkowski and alphonse mucha, 8k
-# prompt: a dog running on grassland
+# prompt: Elsa, d & d, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, matte, sharp focus, illustration, hearthstone, art by artgerm and greg rutkowski and alphonse mucha, 8k
+prompt: photo of a dog running on grassland, masterpiece, high saturation
 # prompt: modern architecture, 8k, dslr, extremely fine details, masterpiece, best quality
-negative_prompt: lowres, bad anatomy, bad hands, cropped, worst quality
+negative_prompt: lowres, bad anatomy, bad hands, cropped, worst quality, low saturation
 unet_max_chunk_size: 4
 n_images: 4
 denoising_steps: 20
 seed: 37
 liked_images:
-    - static/textual_inversion/example_01.png
+    # - static/textual_inversion/example_01.png
     # - static/textual_inversion/pink_lights/333573395_746205383847858_1035458537927676333_n.jpg
-    # - static/textual_inversion/example_03.png
+    - static/textual_inversion/example_03.png
     # - static/textual_inversion/187265575_screenshot_of_howl_s_moving_castle_by_hayao_miyazaki__studio_ghibli__drawing_of_a_castle_in_the_moun.png
 disliked_images:
     # - static/textual_inversion/example_01.png
     - static/textual_inversion/image_107_0.png
-    - static/generated/example_02.png
+    # - static/generated/example_02.png
     # - static/generated/example_03.png
     # - static/textual_inversion/example_03.png
 binary_feedback_type: image_direct
