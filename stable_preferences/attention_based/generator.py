@@ -156,9 +156,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         prompt_embd,
         cached_pos_hiddens: Optional[List[torch.Tensor]] = None,
         cached_neg_hiddens: Optional[List[torch.Tensor]] = None,
-        pos_weights=(0.7, 0.7),
-        neg_weights=(0.4, 0.4),
-        # style_fidelity: float = 0.33,
+        pos_weights=(0.8, 0.8),
+        neg_weights=(0.5, 0.5),
     ):
         if cached_pos_hiddens is None and cached_neg_hiddens is None:
             return self.unet(z_all, t, encoder_hidden_states=prompt_embd)
@@ -198,10 +197,6 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                         else:
                             out_neg = self.old_forward(uncond_hiddens)
 
-                        # # equivalent to varying the negative weight
-                        # if style_fidelity > 0:
-                        #     out_uncond = self.old_forward(uncond_hiddens)
-                        #     out_neg = style_fidelity * out_uncond + (1 - style_fidelity) * out_neg
                         out = torch.cat([out_pos, out_neg], dim=0)
                         return out
                     
@@ -230,11 +225,12 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         guidance_scale: float = 8.0,
         denoising_steps: int = 20,
         only_decode_last: bool = False,
-        feedback_scale: Tuple[float, float] = (0.25, 0.75),
-        min_feedback_weight: float = 0.1,
-        max_feedback_weight: float = 1.0,
-        pos_weights=(0.7, 0.7),
-        neg_weights=(0.4, 0.4),
+        feedback_time: Tuple[float, float] = (0.25, 0.75),
+        min_weight: float = 0.05,
+        max_weight: float = 0.8,
+        neg_scale: float = 0.5,
+        pos_bottleneck_scale: float = 1.0,
+        neg_bottleneck_scale: float = 1.0,
     ):
         """
         Generate a trajectory of images with binary feedback.
@@ -280,8 +276,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         num_warmup_steps = len(timesteps) - denoising_steps * self.scheduler.order
 
-        ref_start_idx = round(len(timesteps) * (1 - feedback_scale[1]))
-        ref_end_idx = round(len(timesteps) * (1 - feedback_scale[0]))
+        ref_start_idx = round(len(timesteps) * (1 - feedback_time[1]))
+        ref_end_idx = round(len(timesteps) * (1 - feedback_time[0]))
 
         traj = []
         with tqdm(total=denoising_steps) as pbar:
@@ -300,11 +296,11 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
                 
                 if i >= ref_start_idx and i <= ref_end_idx:
-                    pos_ws = tuple(max_feedback_weight * w for w in pos_weights)
-                    neg_ws = tuple(max_feedback_weight * w for w in neg_weights)
+                    weight = max_weight
                 else:
-                    pos_ws = tuple(min_feedback_weight * w for w in pos_weights)
-                    neg_ws = tuple(min_feedback_weight * w for w in neg_weights)
+                    weight = min_weight
+                pos_ws = (weight, weight * pos_bottleneck_scale)
+                neg_ws = (weight * neg_scale, weight * neg_scale * neg_bottleneck_scale)
 
                 if z_ref.size(0) > 0:
                     noise = torch.randn_like(z_ref)
