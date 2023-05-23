@@ -1,6 +1,5 @@
-import math
 import os
-from typing import Literal, List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -157,8 +156,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         prompt_embd,
         cached_pos_hiddens: Optional[List[torch.Tensor]] = None,
         cached_neg_hiddens: Optional[List[torch.Tensor]] = None,
-        pos_weights=(1.0, 1.0),
-        neg_weights=(0.5, 0.5),
+        pos_weights=(0.7, 0.7),
+        neg_weights=(0.4, 0.4),
         # style_fidelity: float = 0.33,
     ):
         if cached_pos_hiddens is None and cached_neg_hiddens is None:
@@ -231,7 +230,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         guidance_scale: float = 8.0,
         denoising_steps: int = 20,
         only_decode_last: bool = False,
-        **kwargs
+        feedback_scale: Tuple[float, float] = (0.0, 0.75),
     ):
         """
         Generate a trajectory of images with binary feedback.
@@ -277,6 +276,9 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         num_warmup_steps = len(timesteps) - denoising_steps * self.scheduler.order
 
+        ref_start_idx = round(len(timesteps) * (1 - feedback_scale[1]))
+        ref_end_idx = round(len(timesteps) * (1 - feedback_scale[0]))
+
         traj = []
         with tqdm(total=denoising_steps) as pbar:
             for i, t in enumerate(timesteps):
@@ -290,10 +292,9 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
                 z_single = self.scheduler.scale_model_input(z, t)
                 z_all = torch.cat([z_single] * 2, dim=0)
-
                 z_ref = torch.cat([pos_latents, neg_latents], dim=0)
                 
-                if z_ref.size(0) > 0:
+                if i >= ref_start_idx and i <= ref_end_idx and z_ref.size(0) > 0:
                     noise = torch.randn_like(z_ref)
                     if isinstance(self.scheduler, EulerAncestralDiscreteScheduler):
                         z_ref_noised = alpha_hat**0.5 * z_ref + (1 - alpha_hat)**0.5 * noise
