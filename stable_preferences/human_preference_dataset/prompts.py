@@ -5,7 +5,7 @@ import re
 from typing import Optional
 
 def sample_prompts(
-    dataset_path,
+    dataset_path="stable_preferences/human_preference_dataset/dataset",
     train_file="preference_train.json",
     test_file="preference_test.json",
     split="train",
