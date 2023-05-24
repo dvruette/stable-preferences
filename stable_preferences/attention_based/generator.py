@@ -225,7 +225,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         guidance_scale: float = 8.0,
         denoising_steps: int = 20,
         only_decode_last: bool = False,
-        feedback_time: Tuple[float, float] = (0.25, 0.75),
+        feedback_time: Tuple[float, float] = (0.33, 0.66),
         min_weight: float = 0.05,
         max_weight: float = 0.8,
         neg_scale: float = 0.5,

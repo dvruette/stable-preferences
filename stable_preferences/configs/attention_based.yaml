@@ -4,10 +4,14 @@ model_version: "1.5"
 model_name: dreamlike-art/dreamlike-photoreal-2.0
 # prompt: Anime drawing of a girl in stylish haute couture outfit in the style of 90's vintage anime, surrealism, masterpiece, best quality, detailed line art, fine details
 # prompt: 1girl, anime drawing of a girl, side view, stylish haute couture, masterpiece, best quality, fine details, extremely detailed face
-# prompt: Elsa, d & d, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, matte, sharp focus, illustration, hearthstone, art by artgerm and greg rutkowski and alphonse mucha, 8k
+# prompt: Elsa, d & d, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, matte, sharp focus, 8k
+# prompt: full body, walking pose, slow motion, anatomical photorealistic digital painting portrait of a old male high elf wizard in dark green silk cloak, fabric with intricate pattern, casting a spell of lightning in a dark and moody universe, insanely detailed, bloom, warhammer style, highest quality, Alessandro Casagrande, Greg Rutkowski, Sally Mann, concept art, 4k, analog, high sharpness, detailed pupils, painting, digital painting, detailed face and eyes, Masterpiece, best quality, highly detailed photo, 8k, photorealistic, By jeremy mann, by sandra chevrier, by maciej kuciara, sharp, perfect body, realistic, real shadow, 3d
+# prompt: redshift style, painted portrait of a paladin, masculine, mature, handsome, upper body, grey and silver, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, smooth, sharp focus, illustration, art by gaston bussiere and alphonse mucha
 prompt: photo of a dog running on grassland, masterpiece, best quality, fine details
+# prompt: photo of howl's moving castle, anime, ghibli, masterpiece, best quality, fine details
 # prompt: modern architecture, 8k, dslr, extremely fine details, masterpiece, best quality
 negative_prompt: lowres, bad anatomy, bad hands, cropped, worst quality
+# negative_prompt: jpeg artifacts, low quality, lowres, 3d, render, doll, plastic, blur, haze, monochrome, b&w, text, ugly, unclear eyes, no arms, bad anatomy, cropped, censoring, asymmetric eyes, bad anatomy, bad proportions, cropped, cross-eyed, deformed, extra arms, extra fingers, extra limbs, fused fingers, malformed, mangled hands, misshapen body, missing arms, missing fingers, missing hands, missing legs, poorly drawn, tentacle finger, too many arms, too many fingers, watermark, logo, text, letters, signature, username, words, blurry, cropped
 unet_max_chunk_size: 4
 n_images: 4
 denoising_steps: 20
