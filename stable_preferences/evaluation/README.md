@@ -1,7 +1,6 @@
 ## Evaluation Usage
 
-Make sure you unzip the resources directory (from polybox) within the evaluation directory.
-TEMPORARY: download the hpc from here [human preference classifier](https://mycuhk-my.sharepoint.com/personal/1155172150_link_cuhk_edu_hk/_layouts/15/onedrive.aspx?id=%2Fpersonal%2F1155172150%5Flink%5Fcuhk%5Fedu%5Fhk%2FDocuments%2FHPS%2Fhpc%2Ept&parent=%2Fpersonal%2F1155172150%5Flink%5Fcuhk%5Fedu%5Fhk%2FDocuments%2FHPS&ga=1) and put it into the resources directory.
+Make sure you unzip the resources directory (from [polybox](https://polybox.ethz.ch/index.php/s/puPDM5upJbEdnL2)) within the evaluation directory.
 
 The human preference dataset is available [here](https://mycuhk-my.sharepoint.com/personal/1155172150_link_cuhk_edu_hk/_layouts/15/onedrive.aspx?id=%2Fpersonal%2F1155172150%5Flink%5Fcuhk%5Fedu%5Fhk%2FDocuments%2FHPS%2Fdataset%2Ezip&parent=%2Fpersonal%2F1155172150%5Flink%5Fcuhk%5Fedu%5Fhk%2FDocuments%2FHPS&ga=1). Access utilities can be found in 
 ```
