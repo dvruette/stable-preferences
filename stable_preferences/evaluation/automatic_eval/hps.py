@@ -42,7 +42,7 @@ class HumanPreferenceScore:
             processed_image = self.preprocess(image).unsqueeze(0).to(self.device)
             processed_images.append(processed_image)
         processed_images = torch.cat(processed_images, dim=0)
-        text = clip.tokenize([text]).to(self.device)
+        text = clip.tokenize([text], truncate=True).to(self.device)
 
         with torch.no_grad():
             image_features = self.model.encode_image(processed_images)
