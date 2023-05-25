@@ -1,8 +1,9 @@
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
@@ -35,15 +36,24 @@ def attn_with_weights(
     key = attn.head_to_batch_dim(key)
     value = attn.head_to_batch_dim(value)
 
-    attention_probs = attn.get_attention_scores(query, key, attention_mask)
-
     if weights is not None:
         if weights.shape[0] != 1:
             weights = weights.repeat_interleave(attn.heads, dim=0)
-        attention_probs = attention_probs * weights[:, None]
-        attention_probs = attention_probs / attention_probs.sum(dim=-1, keepdim=True)
+        weights = weights[:, None]
 
-    hidden_states = torch.bmm(attention_probs, value)
+    hidden_states = F.scaled_dot_product_attention(
+        query, key, value, attn_mask=weights.log(), dropout_p=0.0, is_causal=False
+    )
+
+    # attention_probs = attn.get_attention_scores(query, key, attention_mask)
+
+    # if weights is not None:
+    #     if weights.shape[0] != 1:
+    #         weights = weights.repeat_interleave(attn.heads, dim=0)
+    #     attention_probs = attention_probs * weights[:, None]
+    #     attention_probs = attention_probs / attention_probs.sum(dim=-1, keepdim=True)
+
+    # hidden_states = torch.bmm(attention_probs, value)
     hidden_states = attn.batch_to_head_dim(hidden_states)
 
     # linear proj
@@ -218,13 +228,13 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         self,
         prompt: str = "a photo of an astronaut riding a horse on mars",
         negative_prompt: str = "",
-        liked: List[str] = [],
-        disliked: List[str] = [],
+        liked: List[Union[str, Image.Image]] = [],
+        disliked: List[Union[str, Image.Image]] = [],
         seed: int = 42,
         n_images: int = 1,
         guidance_scale: float = 8.0,
         denoising_steps: int = 20,
-        only_decode_last: bool = False,
+        only_decode_last: bool = True,
         feedback_time: Tuple[float, float] = (0.33, 0.66),
         min_weight: float = 0.05,
         max_weight: float = 0.8,
@@ -364,11 +374,12 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         return traj
     
     @staticmethod
-    def image_to_tensor(image: str):
+    def image_to_tensor(image: Union[str, Image.Image]):
         """
         Convert a PIL image to a torch tensor.
         """
-        image = Image.open(image)
+        if isinstance(image, str):
+            image = Image.open(image)
         if not image.mode == "RGB":
             image = image.convert("RGB")
         image = image.resize((512, 512))

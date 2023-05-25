@@ -2,9 +2,6 @@ import torch
 from PIL import Image
 import clip
 
-from torchmetrics.functional.multimodal import clip_score
-from functools import partial
-
 
 class ClipScore:
     def __init__(self, clip_model: str = "ViT-B/32", device: str = None) -> None:
@@ -23,11 +20,8 @@ class ClipScore:
         else:
             self.device = device
         self.model, self.preprocess = clip.load(clip_model, device=self.device)
-        self.clip_score_fn = partial(
-            clip_score, model_name_or_path="openai/clip-vit-base-patch16"
-        )
 
-    def compute_clip_score(self, image: Image, text_prompt: str) -> float:
+    def compute(self, text_prompt: str, image: Image) -> float:
         """
         Compute the CLIP score for a given image and text prompt.
 
@@ -39,15 +33,20 @@ class ClipScore:
             float: The CLIP score.
         """
         # Preprocess image
-        image_tensor = (self.preprocess(image).unsqueeze(0).to(self.device) * 255).type(
-            torch.uint8
-        )
+        image = self.preprocess(image).unsqueeze(0).to(self.device)
+        text = clip.tokenize([text_prompt]).to(self.device)
         # print(image_tensor.shape)
 
-        clip_score = self.clip_score_fn(image_tensor, text_prompt).detach()
-        return float(clip_score)
+        image_features = self.model.encode_image(image)
+        text_features = self.model.encode_text(text)
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
 
-    def compute_clip_score_from_path(self, image_path: str, text_prompt: str) -> float:
+        # Compute the CLIP score
+        similarity = (100.0 * image_features @ text_features.T)
+        return similarity.item()
+
+    def compute_from_path(self, text_prompt: str, image_path: str) -> float:
         """
         Compute the CLIP score for a given image path and text prompt.
 
@@ -62,7 +61,7 @@ class ClipScore:
         image = Image.open(image_path).convert("RGB")
 
         # Call the compute_clip_score method with the loaded image
-        return self.compute_clip_score(image, text_prompt)
+        return self.compute(image, text_prompt)
 
 
 # Example usage

@@ -5,11 +5,11 @@ import re
 from typing import Optional
 
 def sample_prompts(
+    max_num_prompts=-1,
     dataset_path="stable_preferences/human_preference_dataset/dataset",
     train_file="preference_train.json",
     test_file="preference_test.json",
     split="train",
-    max_num_prompts=-1,
     seed: Optional[int] = 0,
     fix_spacing: bool = True,
 ):
@@ -40,9 +40,7 @@ def sample_prompts(
     for item in data:
         prompts.append(item["prompt"])
 
-    if seed is not None:
-        random.seed(seed)
-    random.shuffle(prompts)
+    random.Random(seed).shuffle(prompts)
 
     if max_num_prompts < 0:
         output = prompts

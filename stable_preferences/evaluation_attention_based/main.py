@@ -1,21 +1,21 @@
 import math
 import os
-import re
+import glob
 from datetime import date
 
 import hydra
 import torch
+import pandas as pd
+import tqdm
+import numpy as np
 from PIL import Image
 from omegaconf import DictConfig
-from os.path import join, exists
-from glob import glob
 from stable_preferences.attention_based.generator import StableDiffuserWithAttentionFeedback
 from stable_preferences.utils import get_free_gpu
 from stable_preferences.human_preference_dataset.prompts import sample_prompts
-import pdb
-from stable_preferences.evaluation.eval import *
-import numpy as np
-import json
+
+from stable_preferences.evaluation.automatic_eval.image_similarity import ImageSimilarity
+from stable_preferences.evaluation.automatic_eval.hps import HumanPreferenceScore
 
 def tile_images(images):
     size = images[0].size
@@ -57,56 +57,104 @@ def main(ctx: DictConfig):
         unet_max_chunk_size=ctx.unet_max_chunk_size,
         torch_dtype=dtype,
     ).to(device)
+    # generator.pipeline.enable_xformers_memory_efficient_attention()
     
-    
-        
     date_str = date.today().strftime("%Y-%m-%d")
     out_folder = os.path.join("outputs", "rounds", date_str)
-    experiment_paths = sorted(glob(join(out_folder, 'experiment_*')))
+    experiment_paths = sorted(glob.glob(os.path.join(out_folder, 'experiment_*')))
     n_experiment = len(experiment_paths)
         
     out_folder = os.path.join(out_folder, "experiment_" + str(n_experiment))
     os.makedirs(out_folder, exist_ok=True)
- 
-    prompt=sample_prompts(max_num_prompts=128, seed=42)[n_experiment] if ctx.sample_prompt else ctx.prompt
     
-    liked=list(ctx.liked_images) if ctx.liked_images else []
-    disliked=list(ctx.disliked_images) if ctx.disliked_images else []
+    if ctx.sample_prompt:
+        prompts = sample_prompts(max_num_prompts=ctx.num_prompts, seed=0)
+    else:
+        prompts = [ctx.prompt]
     
-    score_dic = dict(prompt = prompt, rounds = [])
+    # scoring_model = ClipScore(device=device)
+    hps_model = HumanPreferenceScore(weight_path="stable_preferences/evaluation/resources/hpc.pt", device=device)
+    img_similarity_model = ImageSimilarity(device=device)
     
-    for round in range(ctx.n_rounds):
-        trajectory = generator.generate(
-            prompt=prompt,
-            negative_prompt=ctx.negative_prompt,
-            liked=liked,
-            disliked=disliked,
-            seed=ctx.seed,
-            n_images=ctx.n_images,
-            denoising_steps=ctx.denoising_steps,
-        )
-        scores = np.zeros(ctx.n_images)
-        out_paths = []
-        imgs = trajectory[:][-1]
-        for i, img in enumerate(imgs):
-            # each image is of the form example_ID.png. Extract the max id
-            out_path = os.path.join(out_folder, f"round_{round}_image_{i}.png")
-            out_paths.append(out_path)
-            img.save(out_path)
-            print(f"Saved image to {out_path}")
-            scores[i] = clip_score(out_path, prompt)
-            score_dic['rounds'].append([dict(image_path=out_path,score=scores[i])])
-        if len(imgs) > 1:
-            tiled = tile_images(imgs)
-            tiled_path = os.path.join(out_folder, f"tiled_round_{round}.png")
-            tiled.save(tiled_path)
-            print(f"Saved tile to {tiled_path}")
-        #pdb.set_trace()
-        liked.append(out_paths[np.argmax(scores)])
-        disliked = disliked + np.delete(out_paths, np.argmax(scores)).tolist()
-        
-    with open(os.path.join(out_folder, "scores.json"), 'w', encoding ='utf8') as json_file:
-        json.dump(score_dic, json_file, ensure_ascii = False)
+    init_liked = list(ctx.liked_images) if ctx.liked_images else []
+    init_disliked = list(ctx.disliked_images) if ctx.disliked_images else []
+    init_liked = [Image.open(img_path) for img_path in init_liked]
+    init_disliked = [Image.open(img_path) for img_path in init_disliked]
+
+    metrics = []
+    with torch.inference_mode():
+        for prompt_idx, prompt in enumerate(tqdm.tqdm(prompts, smoothing=0.01)):
+            print(f"Prompt {prompt_idx + 1}/{len(prompts)}: {prompt}")
+
+            liked = init_liked.copy()
+            disliked = init_disliked.copy()
+
+            if ctx.seed is None:
+                seed = torch.randint(0, 2 ** 32, (1,)).item()
+            else:
+                seed = ctx.seed
+
+            for i in range(ctx.n_rounds):
+                trajectory = generator.generate(
+                    prompt=prompt,
+                    negative_prompt=ctx.negative_prompt,
+                    liked=liked,
+                    disliked=disliked,
+                    seed=seed,
+                    n_images=ctx.n_images,
+                    denoising_steps=ctx.denoising_steps,
+                )
+                imgs = trajectory[-1]
+
+                hp_scores = hps_model.compute(prompt, imgs)
+
+                if len(liked) > 0:
+                    pos_sims = img_similarity_model.compute(imgs, liked)
+                    pos_sims = np.mean(pos_sims, axis=1)
+                else:
+                    pos_sims = [None] * len(imgs)
+                
+                if len(disliked) > 0:
+                    neg_sims = img_similarity_model.compute(imgs, disliked)
+                    neg_sims = np.mean(neg_sims, axis=1)
+                else:
+                    neg_sims = [None] * len(imgs)
+
+                out_paths = []
+                for j, (img, hps, pos_sim, neg_sim) in enumerate(zip(imgs, hp_scores, pos_sims, neg_sims)):
+                    # each image is of the form example_ID.xpng. Extract the max id
+                    out_path = os.path.join(out_folder, f"prompt_{prompt_idx}_round_{i}_image_{j}.png")
+                    out_paths.append(out_path)
+                    img.save(out_path)
+                    print(f"Saved image to {out_path}")
+
+                    metrics.append({
+                        "round": i,
+                        "prompt": prompt,
+                        "image_idx": j,
+                        "image": out_path,
+                        "hps": hps,
+                        "pos_sim": pos_sim,
+                        "neg_sim": neg_sim,
+                        "seed": ctx.seed,
+                        "liked": liked,
+                        "disliked": disliked,
+                    })
+                if len(imgs) > 1:
+                    tiled = tile_images(imgs)
+                    tiled_path = os.path.join(out_folder, f"prompt_{prompt_idx}_tiled_round_{i}.png")
+                    tiled.save(tiled_path)
+                    print(f"Saved tile to {tiled_path}")
+
+                liked.append(imgs[np.argmax(hp_scores)])
+                # disliked = disliked + np.delete(out_paths, np.argmax(scores)).tolist()
+                disliked.append(imgs[np.argmin(hp_scores)])
+                print(f"HPS scores: {hp_scores}")
+                print(f"Pos. similarities: {pos_sims}")
+                print(f"Neg. similarities: {neg_sims}")
+
+            pd.DataFrame(metrics).to_csv(os.path.join(out_folder, "metrics.csv"), index=False)
+            print(f"Saved metrics to {out_folder}/metrics.csv")
 
 
 if __name__ == "__main__":

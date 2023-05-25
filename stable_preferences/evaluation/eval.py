@@ -10,7 +10,7 @@ def clip_score(image_path, description):
     print(
         f"Calculating CLIP score for image {image_path} and description '{description}'"
     )
-    return measure.compute_clip_score_from_path(image_path, description)
+    return measure.compute_from_path(description, image_path)
 
 
 def hpc_score(image_path, description):
