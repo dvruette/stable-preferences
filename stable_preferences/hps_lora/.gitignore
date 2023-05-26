@@ -12,6 +12,6 @@ negative/*
 logs
 logs/*
 validation_prompts.txt
-weights
+hps_lora_weights
 __pycache__/
 outputs
