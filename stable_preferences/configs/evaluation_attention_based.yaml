@@ -12,7 +12,6 @@ model_name: dreamlike-art/dreamlike-photoreal-2.0
 # prompt: modern architecture, 8k, dslr, extremely fine details, masterpiece, best quality
 negative_prompt: lowres, bad anatomy, bad hands, cropped, worst quality
 # negative_prompt: jpeg artifacts, low quality, lowres, 3d, render, doll, plastic, blur, haze, monochrome, b&w, text, ugly, unclear eyes, no arms, bad anatomy, cropped, censoring, asymmetric eyes, bad anatomy, bad proportions, cropped, cross-eyed, deformed, extra arms, extra fingers, extra limbs, fused fingers, malformed, mangled hands, misshapen body, missing arms, missing fingers, missing hands, missing legs, poorly drawn, tentacle finger, too many arms, too many fingers, watermark, logo, text, letters, signature, username, words, blurry, cropped
-unet_max_chunk_size: 4
 sample_prompt: True
 n_images: 4
 n_rounds: 3

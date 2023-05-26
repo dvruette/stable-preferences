@@ -134,7 +134,6 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         model_ckpt: Optional[str] = None,
         model_name: Optional[str] = None,
         stable_diffusion_version: str = "1.5",
-        unet_max_chunk_size=8,
         torch_dtype=torch.float32,
     ):
         super().__init__()
@@ -184,7 +183,6 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
             f"TextEncoder: {sum(p.numel() for p in self.text_encoder.parameters()) / 1e6:.0f}M"
         )
 
-        self.unet_max_chunk_size = unet_max_chunk_size
         self.dtype = torch_dtype
 
     @property
