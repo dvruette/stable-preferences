@@ -27,3 +27,6 @@ disliked_images:
     # - static/generated/example_02.png
     # - static/generated/example_03.png
     # - static/textual_inversion/example_03.png
+
+# For loading the Human Preference Score LoRA weights 
+lora_weights: projects/stable-preferences/stable_preferences/hps_lora/hps_lora_weights/adapted_model.bin

@@ -10,13 +10,17 @@ import tqdm
 import numpy as np
 from PIL import Image
 from omegaconf import DictConfig
-from stable_preferences.attention_based.generator import StableDiffuserWithAttentionFeedback
+from stable_preferences.attention_based.generator import (
+    StableDiffuserWithAttentionFeedback,
+    apply_unet_lora_weights,
+)
 from stable_preferences.utils import get_free_gpu
 from stable_preferences.human_preference_dataset.prompts import sample_prompts
 
 from stable_preferences.evaluation.automatic_eval.image_similarity import ImageSimilarity
 from stable_preferences.evaluation.automatic_eval.image_diversity import ImageDiversity
 from stable_preferences.evaluation.automatic_eval.hps import HumanPreferenceScore
+
 
 def tile_images(images):
     size = images[0].size
@@ -26,7 +30,7 @@ def tile_images(images):
     grid_size_y = math.ceil(len(images) / grid_size_x)
 
     # Create a new blank image with the size of the tiled grid
-    tiled_image = Image.new('RGB', (grid_size_x * size[0], grid_size_y * size[1]))
+    tiled_image = Image.new("RGB", (grid_size_x * size[0], grid_size_y * size[1]))
 
     # Paste the four images into the tiled image
     for x in range(grid_size_x):
@@ -39,13 +43,16 @@ def tile_images(images):
     return tiled_image
 
 
-@hydra.main(config_path="../configs", config_name="evaluation_attention_based", version_base=None)
+@hydra.main(
+    config_path="../configs",
+    config_name="evaluation_attention_based",
+    version_base=None,
+)
 def main(ctx: DictConfig):
-
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     device = "cpu"
     device = get_free_gpu() if torch.cuda.is_available() else device
-    device ="cuda:2"
+    # device ="cuda:2"
     print(f"Using device: {device}")
 
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
@@ -59,22 +66,31 @@ def main(ctx: DictConfig):
         torch_dtype=dtype,
     ).to(device)
     # generator.pipeline.enable_xformers_memory_efficient_attention()
-    
+
+    # After the pipeline was generated inside the generator, apply LoRA if specified
+    if ctx.lora_weights:
+        print(f"Applying LoRA weights from {ctx.lora_weights}")
+        apply_unet_lora_weights(
+            pipeline=generator.pipeline, unet_path=ctx.lora_weights, device=device
+        )
+
     date_str = date.today().strftime("%Y-%m-%d")
     out_folder = os.path.join("outputs", "rounds", date_str)
-    experiment_paths = sorted(glob.glob(os.path.join(out_folder, 'experiment_*')))
+    experiment_paths = sorted(glob.glob(os.path.join(out_folder, "experiment_*")))
     n_experiment = len(experiment_paths)
-        
+
     out_folder = os.path.join(out_folder, "experiment_" + str(n_experiment))
     os.makedirs(out_folder, exist_ok=True)
-    
+
     if ctx.sample_prompt:
         prompts = sample_prompts(max_num_prompts=ctx.num_prompts, seed=0)
     else:
         prompts = [ctx.prompt]
-    
+
     # scoring_model = ClipScore(device=device)
-    hps_model = HumanPreferenceScore(weight_path="stable_preferences/evaluation/resources/hpc.pt", device=device)
+    hps_model = HumanPreferenceScore(
+        weight_path="stable_preferences/evaluation/resources/hpc.pt", device=device
+    )
     img_similarity_model = ImageSimilarity(device=device)
     img_diversity_model = ImageDiversity(device=device)
     
@@ -92,7 +108,7 @@ def main(ctx: DictConfig):
             disliked = init_disliked.copy()
 
             if ctx.seed is None:
-                seed = torch.randint(0, 2 ** 32, (1,)).item()
+                seed = torch.randint(0, 2**32, (1,)).item()
             else:
                 seed = ctx.seed
 
@@ -115,7 +131,7 @@ def main(ctx: DictConfig):
                     pos_sims = np.mean(pos_sims, axis=1)
                 else:
                     pos_sims = [None] * len(imgs)
-                
+
                 if len(disliked) > 0:
                     neg_sims = img_similarity_model.compute(imgs, disliked)
                     neg_sims = np.mean(neg_sims, axis=1)
@@ -125,9 +141,13 @@ def main(ctx: DictConfig):
                 round_diversity = img_diversity_model.compute(imgs)
 
                 out_paths = []
-                for j, (img, hps, pos_sim, neg_sim) in enumerate(zip(imgs, hp_scores, pos_sims, neg_sims)):
+                for j, (img, hps, pos_sim, neg_sim) in enumerate(
+                    zip(imgs, hp_scores, pos_sims, neg_sims)
+                ):
                     # each image is of the form example_ID.xpng. Extract the max id
-                    out_path = os.path.join(out_folder, f"prompt_{prompt_idx}_round_{i}_image_{j}.png")
+                    out_path = os.path.join(
+                        out_folder, f"prompt_{prompt_idx}_round_{i}_image_{j}.png"
+                    )
                     out_paths.append(out_path)
                     img.save(out_path)
                     print(f"Saved image to {out_path}")
@@ -147,7 +167,9 @@ def main(ctx: DictConfig):
                     })
                 if len(imgs) > 1:
                     tiled = tile_images(imgs)
-                    tiled_path = os.path.join(out_folder, f"prompt_{prompt_idx}_tiled_round_{i}.png")
+                    tiled_path = os.path.join(
+                        out_folder, f"prompt_{prompt_idx}_tiled_round_{i}.png"
+                    )
                     tiled.save(tiled_path)
                     print(f"Saved tile to {tiled_path}")
 
@@ -159,7 +181,9 @@ def main(ctx: DictConfig):
                 print(f"Pos. similarities: {pos_sims}")
                 print(f"Neg. similarities: {neg_sims}")
 
-            pd.DataFrame(metrics).to_csv(os.path.join(out_folder, "metrics.csv"), index=False)
+            pd.DataFrame(metrics).to_csv(
+                os.path.join(out_folder, "metrics.csv"), index=False
+            )
             print(f"Saved metrics to {out_folder}/metrics.csv")
 
 
