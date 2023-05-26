@@ -17,6 +17,7 @@ from stable_preferences.human_preference_dataset.prompts import sample_prompts
 from stable_preferences.evaluation.automatic_eval.image_similarity import ImageSimilarity
 from stable_preferences.evaluation.automatic_eval.image_diversity import ImageDiversity
 from stable_preferences.evaluation.automatic_eval.hps import HumanPreferenceScore
+import pdb
 
 def tile_images(images):
     size = images[0].size
@@ -38,14 +39,30 @@ def tile_images(images):
             tiled_image.paste(img, (x * size[0], y * size[1]))
     return tiled_image
 
+def get_prompts(path_to_dir):
+    prompt_paths = glob.glob(os.path.join(path_to_dir, "*.txt"))
+    prompts = []
+    for prompt_path in prompt_paths:
+        with open(prompt_path, "r") as f:
+            prompt = f.read()
+        prompts.append(prompt)
+    return prompts
 
-@hydra.main(config_path="../configs", config_name="evaluation_attention_based", version_base=None)
+def get_images(path_to_dir):
+    image_paths = glob.glob(os.path.join(path_to_dir, "*.jpg"))
+    images = []
+    for image_path in image_paths:
+        image = Image.open(image_path)
+        images.append(image)
+    return images
+
+@hydra.main(config_path="../configs", config_name="evaluation_attention_based_visual", version_base=None)
 def main(ctx: DictConfig):
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     device = "cpu"
     device = get_free_gpu() if torch.cuda.is_available() else device
-    device ="cuda:2"
+    device ="cuda:0"
     print(f"Using device: {device}")
 
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
@@ -61,17 +78,16 @@ def main(ctx: DictConfig):
     # generator.pipeline.enable_xformers_memory_efficient_attention()
     
     date_str = date.today().strftime("%Y-%m-%d")
-    out_folder = os.path.join("outputs", "rounds", date_str)
+    
+    out_folder = os.path.join(ctx.output_path, "outputs", "rounds", date_str) if hasattr(ctx, "output_path") else os.path.join("outputs", "rounds", date_str)
     experiment_paths = sorted(glob.glob(os.path.join(out_folder, 'experiment_*')))
     n_experiment = len(experiment_paths)
         
     out_folder = os.path.join(out_folder, "experiment_" + str(n_experiment))
     os.makedirs(out_folder, exist_ok=True)
     
-    if ctx.sample_prompt:
-        prompts = sample_prompts(max_num_prompts=ctx.num_prompts, seed=0)
-    else:
-        prompts = [ctx.prompt]
+    prompts = get_prompts(ctx.images_prompts_dir)
+    images = get_images(ctx.images_prompts_dir)
     
     # scoring_model = ClipScore(device=device)
     hps_model = HumanPreferenceScore(weight_path="stable_preferences/evaluation/resources/hpc.pt", device=device)
@@ -84,9 +100,13 @@ def main(ctx: DictConfig):
     init_disliked = [Image.open(img_path) for img_path in init_disliked]
 
     metrics = []
+    pdb.set_trace()
     with torch.inference_mode():
-        for prompt_idx, prompt in enumerate(tqdm.tqdm(prompts, smoothing=0.01)):
-            print(f"Prompt {prompt_idx + 1}/{len(prompts)}: {prompt}")
+        for idx, prompt in enumerate(tqdm.tqdm(prompts, smoothing=0.01)):
+            
+            reference_image = images[idx]
+            
+            print(f"Prompt {idx + 1}/{len(prompts)}: {prompt}")
 
             liked = init_liked.copy()
             disliked = init_disliked.copy()
@@ -107,8 +127,8 @@ def main(ctx: DictConfig):
                     denoising_steps=ctx.denoising_steps,
                 )
                 imgs = trajectory[-1]
-
-                hp_scores = hps_model.compute(prompt, imgs)
+                
+                img_sim_scores = img_similarity_model.compute([reference_image], imgs)[0]
 
                 if len(liked) > 0:
                     pos_sims = img_similarity_model.compute(imgs, liked)
@@ -122,12 +142,14 @@ def main(ctx: DictConfig):
                 else:
                     neg_sims = [None] * len(imgs)
                     
+                hp_scores = hps_model.compute(prompt, imgs)                
+                
                 round_diversity = img_diversity_model.compute(imgs)
 
                 out_paths = []
-                for j, (img, hps, pos_sim, neg_sim) in enumerate(zip(imgs, hp_scores, pos_sims, neg_sims)):
+                for j, (img, hps, target_img_sim, pos_sim, neg_sim) in enumerate(zip(imgs, hp_scores, img_sim_scores, pos_sims, neg_sims)):
                     # each image is of the form example_ID.xpng. Extract the max id
-                    out_path = os.path.join(out_folder, f"prompt_{prompt_idx}_round_{i}_image_{j}.png")
+                    out_path = os.path.join(out_folder, f"prompt_{idx}_round_{i}_image_{j}.png")
                     out_paths.append(out_path)
                     img.save(out_path)
                     print(f"Saved image to {out_path}")
@@ -139,6 +161,8 @@ def main(ctx: DictConfig):
                         "image_idx": j,
                         "image": out_path,
                         "hps": hps,
+                        "target_img_sim": target_img_sim,
+                        "round_diversity": round_diversity,
                         "pos_sim": pos_sim,
                         "neg_sim": neg_sim,
                         "seed": ctx.seed,
@@ -147,13 +171,14 @@ def main(ctx: DictConfig):
                     })
                 if len(imgs) > 1:
                     tiled = tile_images(imgs)
-                    tiled_path = os.path.join(out_folder, f"prompt_{prompt_idx}_tiled_round_{i}.png")
+                    tiled_path = os.path.join(out_folder, f"prompt_{idx}_tiled_round_{i}.png")
                     tiled.save(tiled_path)
                     print(f"Saved tile to {tiled_path}")
 
-                liked.append(imgs[np.argmax(hp_scores)])
+                liked.append(imgs[np.argmax(img_sim_scores)])
                 # disliked = disliked + np.delete(out_paths, np.argmax(scores)).tolist()
-                disliked.append(imgs[np.argmin(hp_scores)])
+                # disliked.append(imgs[np.argmin(img_sim_scores)])
+                print(f"Similarities to target image: {img_sim_scores}")
                 print(f"HPS scores: {hp_scores}")
                 print(f"Round diversity: {round_diversity}")
                 print(f"Pos. similarities: {pos_sims}")
