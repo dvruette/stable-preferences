@@ -351,9 +351,10 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         guidance_scale: float = 8.0,
         denoising_steps: int = 20,
         only_decode_last: bool = True,
-        feedback_time: Tuple[float, float] = (0.33, 0.66),
-        min_weight: float = 0.05,
-        max_weight: float = 0.8,
+        feedback_start: float = 0.33,
+        feedback_end: float = 0.66,
+        min_weight: float = 0.1,
+        max_weight: float = 1.0,
         neg_scale: float = 0.5,
         pos_bottleneck_scale: float = 1.0,
         neg_bottleneck_scale: float = 1.0,
@@ -387,7 +388,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         else:
             pos_latents = torch.tensor([], device=self.device, dtype=self.dtype)
 
-        if liked and len(disliked) > 0:
+        if disliked and len(disliked) > 0:
             neg_images = [self.image_to_tensor(img) for img in disliked]
             neg_images = torch.stack(neg_images).to(self.device, dtype=self.dtype)
             neg_latents = (
@@ -412,8 +413,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
 
         num_warmup_steps = len(timesteps) - denoising_steps * self.scheduler.order
 
-        ref_start_idx = round(len(timesteps) * (1 - feedback_time[1]))
-        ref_end_idx = round(len(timesteps) * (1 - feedback_time[0]))
+        ref_start_idx = round(len(timesteps) * feedback_start)
+        ref_end_idx = round(len(timesteps) * feedback_end)
 
         traj = []
         with tqdm(total=denoising_steps) as pbar:

@@ -59,6 +59,11 @@ def main(ctx: DictConfig):
         seed=ctx.seed,
         n_images=ctx.n_images,
         denoising_steps=ctx.denoising_steps,
+        feedback_start=ctx.feedback.start,
+        feedback_end=ctx.feedback.end,
+        min_weight=ctx.feedback.min_weight,
+        max_weight=ctx.feedback.max_weight,
+        neg_scale=ctx.feedback.neg_scale,
     )
 
     imgs = trajectory[:][-1]
