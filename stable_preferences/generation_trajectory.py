@@ -28,7 +28,9 @@ class StableDiffuserWithBinaryFeedback(nn.Module):
             raise ValueError(f"Unknown stable diffusion version: {stable_diffusion_version}. Version must be either '1.5' or '2.1'")
 
         scheduler = DPMSolverSinglestepScheduler.from_pretrained(model_name, subfolder="scheduler")
-        pipe = StableDiffusionPipeline.from_pretrained(model_name, scheduler=scheduler, torch_dtype=torch_dtype)
+        pipe = StableDiffusionPipeline.from_pretrained("dreamlike-art/dreamlike-photoreal-2.0", scheduler=scheduler, torch_dtype=torch_dtype)
+        # model_ckpt = "dreamlike-art/dreamlike-photoreal-2.0"
+        # pipe = StableDiffusionPipeline.from_ckpt(model_ckpt, scheduler=scheduler, torch_dtype=torch_dtype, safety_checker=None)
 
         self.unet = pipe.unet
         self.vae = pipe.vae

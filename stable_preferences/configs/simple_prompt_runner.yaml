@@ -1,14 +1,19 @@
 model_version: "1.5"
-prompt: "Elsa, d & d, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, matte, sharp focus, illustration, hearthstone, art by artgerm and greg rutkowski and alphonse mucha, 8k"
+# prompt: "Elsa, d & d, fantasy, intricate, elegant, highly detailed, digital painting, artstation, concept art, matte, sharp focus, illustration, hearthstone, art by artgerm and greg rutkowski and alphonse mucha, 8k"
+# prompt: "strong warrior princess| centered| key visual| intricate| highly detailed| breathtaking beauty| precise lineart| vibrant| comprehensive cinematic| Carne Griffiths| Conrad Roset"
+# prompt: "sango fantasy, fantasy magic, , intricate, sharp focus, illustration, highly detailed, digital painting, concept art, matte, Artgerm and Paul lewin and kehinde wiley, masterpiece"
+prompt: "in the desert the great pyramid of giza in the night, sky from the great pyramid to the universe, beautiful night, cinematic, trending on artstation, 8k, masterpiece"
 unet_max_chunk_size: 8
 n_images: 2
 denoising_steps: 50
 seed: 4259
 liked_prompts: 
-    - "strong warrior princess| centered| key visual| intricate| highly detailed| breathtaking beauty| precise lineart| vibrant| comprehensive cinematic| Carne Griffiths| Conrad Roset"
-    - "sango fantasy, fantasy magic, , intricate, sharp focus, illustration, highly detailed, digital painting, concept art, matte, Artgerm and Paul lewin and kehinde wiley, masterpiece"
+    - "thunderstorm flashes in the sky to the ground, dramatic scenery, thunderstorm"
+    - "night, northern lights in the sky, dark"
+    # - "strong warrior princess| centered| key visual| intricate| highly detailed| breathtaking beauty| precise lineart| vibrant| comprehensive cinematic| Carne Griffiths| Conrad Roset"
+    # - "sango fantasy, fantasy magic, , intricate, sharp focus, illustration, highly detailed, digital painting, concept art, matte, Artgerm and Paul lewin and kehinde wiley, masterpiece"
 disliked_prompts: 
-    - "longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"
+    - "daylight, the great pyramid of giza in the desert, bad quality"
 binary_feedback_type: prompt  # or "image_inversion" or "image_direct"
 
 field:
@@ -19,7 +24,8 @@ additional_args:  # additional parameters specifically for the field and space
     flatten_channels: true
     preference_portion: 0.5
     guidance_scale: 9
+    walk_distance: 8.0
     # clip_preference_vec: false
     # smoothing_strength: 1.0
     # poly_coefficient: 4.0
-    exp_coefficient: 0.01
+    exp_coefficient: 1.0
