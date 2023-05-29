@@ -17,7 +17,6 @@ from stable_preferences.human_preference_dataset.prompts import sample_prompts
 from stable_preferences.evaluation.automatic_eval.image_similarity import ImageSimilarity
 from stable_preferences.evaluation.automatic_eval.image_diversity import ImageDiversity
 from stable_preferences.evaluation.automatic_eval.hps import HumanPreferenceScore
-import pdb
 
 def tile_images(images):
     size = images[0].size
@@ -39,8 +38,14 @@ def tile_images(images):
             tiled_image.paste(img, (x * size[0], y * size[1]))
     return tiled_image
 
+
+def word_dropout(x, p=0.5):
+    words = x.split()
+    words = [word for word in words if np.random.rand() > p]
+    return " ".join(words)
+
 def get_prompts(path_to_dir):
-    prompt_paths = glob.glob(os.path.join(path_to_dir, "*.txt"))
+    prompt_paths = sorted(glob.glob(os.path.join(path_to_dir, "*.txt")))
     prompts = []
     for prompt_path in prompt_paths:
         with open(prompt_path, "r") as f:
@@ -49,7 +54,7 @@ def get_prompts(path_to_dir):
     return prompts
 
 def get_images(path_to_dir):
-    image_paths = glob.glob(os.path.join(path_to_dir, "*.jpg"))
+    image_paths = sorted(glob.glob(os.path.join(path_to_dir, "*.jpg")))
     images = []
     for image_path in image_paths:
         image = Image.open(image_path)
@@ -72,7 +77,6 @@ def main(ctx: DictConfig):
         model_ckpt=ctx.model_ckpt if hasattr(ctx, "model_ckpt") else None,
         model_name=ctx.model_name if hasattr(ctx, "model_name") else None,
         stable_diffusion_version=ctx.model_version,
-        unet_max_chunk_size=ctx.unet_max_chunk_size,
         torch_dtype=dtype,
     ).to(device)
     # generator.pipeline.enable_xformers_memory_efficient_attention()
@@ -88,19 +92,20 @@ def main(ctx: DictConfig):
     
     prompts = get_prompts(ctx.images_prompts_dir)
     images = get_images(ctx.images_prompts_dir)
+
+    print(f"Found {len(prompts)} prompts and {len(images)} images")
     
     # scoring_model = ClipScore(device=device)
     hps_model = HumanPreferenceScore(weight_path="stable_preferences/evaluation/resources/hpc.pt", device=device)
     img_similarity_model = ImageSimilarity(device=device)
     img_diversity_model = ImageDiversity(device=device)
     
-    init_liked = list(ctx.liked_images) if ctx.liked_images else []
-    init_disliked = list(ctx.disliked_images) if ctx.disliked_images else []
-    init_liked = [Image.open(img_path) for img_path in init_liked]
-    init_disliked = [Image.open(img_path) for img_path in init_disliked]
+    init_liked_paths = list(ctx.liked_images) if ctx.liked_images else []
+    init_disliked_paths = list(ctx.disliked_images) if ctx.disliked_images else []
+    init_liked = [Image.open(img_path) for img_path in init_liked_paths]
+    init_disliked = [Image.open(img_path) for img_path in init_disliked_paths]
 
     metrics = []
-    pdb.set_trace()
     with torch.inference_mode():
         for idx, prompt in enumerate(tqdm.tqdm(prompts, smoothing=0.01)):
             
@@ -108,6 +113,8 @@ def main(ctx: DictConfig):
             
             print(f"Prompt {idx + 1}/{len(prompts)}: {prompt}")
 
+            liked_paths = init_liked_paths.copy()
+            disliked_paths = init_disliked_paths.copy()
             liked = init_liked.copy()
             disliked = init_disliked.copy()
 
@@ -117,14 +124,23 @@ def main(ctx: DictConfig):
                 seed = ctx.seed
 
             for i in range(ctx.n_rounds):
+                ps = [prompt] * ctx.n_images
+                if ctx.prompt_dropout > 0:
+                    ps = [word_dropout(p, ctx.prompt_dropout) for p in ps]
                 trajectory = generator.generate(
-                    prompt=prompt,
+                    prompt=ps,
                     negative_prompt=ctx.negative_prompt,
                     liked=liked,
                     disliked=disliked,
                     seed=seed,
                     n_images=ctx.n_images,
                     denoising_steps=ctx.denoising_steps,
+                    guidance_scale=ctx.guidance_scale,
+                    feedback_start=ctx.feedback.start,
+                    feedback_end=ctx.feedback.end,
+                    min_weight=ctx.feedback.min_weight,
+                    max_weight=ctx.feedback.max_weight,
+                    neg_scale=ctx.feedback.neg_scale,
                 )
                 imgs = trajectory[-1]
                 
@@ -147,7 +163,7 @@ def main(ctx: DictConfig):
                 round_diversity = img_diversity_model.compute(imgs)
 
                 out_paths = []
-                for j, (img, hps, target_img_sim, pos_sim, neg_sim) in enumerate(zip(imgs, hp_scores, img_sim_scores, pos_sims, neg_sims)):
+                for j, (p, img, hps, target_img_sim, pos_sim, neg_sim) in enumerate(zip(ps, imgs, hp_scores, img_sim_scores, pos_sims, neg_sims)):
                     # each image is of the form example_ID.xpng. Extract the max id
                     out_path = os.path.join(out_folder, f"prompt_{idx}_round_{i}_image_{j}.png")
                     out_paths.append(out_path)
@@ -156,8 +172,8 @@ def main(ctx: DictConfig):
 
                     metrics.append({
                         "round": i,
-                        "prompt": prompt,
-                        "prompt_idx": prompt_idx,
+                        "prompt": p,
+                        "prompt_idx": idx,
                         "image_idx": j,
                         "image": out_path,
                         "hps": hps,
@@ -165,9 +181,9 @@ def main(ctx: DictConfig):
                         "round_diversity": round_diversity,
                         "pos_sim": pos_sim,
                         "neg_sim": neg_sim,
-                        "seed": ctx.seed,
-                        "liked": liked,
-                        "disliked": disliked,
+                        "seed": seed,
+                        "liked": liked_paths,
+                        "disliked": disliked_paths,
                     })
                 if len(imgs) > 1:
                     tiled = tile_images(imgs)
@@ -175,12 +191,16 @@ def main(ctx: DictConfig):
                     tiled.save(tiled_path)
                     print(f"Saved tile to {tiled_path}")
 
-                liked.append(imgs[np.argmax(img_sim_scores)])
+                liked_idx = np.argmax(img_sim_scores)
+                disliked_idx = np.argmin(img_sim_scores)
+                liked.append(imgs[liked_idx])
                 # disliked = disliked + np.delete(out_paths, np.argmax(scores)).tolist()
-                # disliked.append(imgs[np.argmin(img_sim_scores)])
+                disliked.append(imgs[disliked_idx])
+                liked_paths.append(out_paths[liked_idx])
+                disliked_paths.append(out_paths[disliked_idx])
                 print(f"Similarities to target image: {img_sim_scores}")
                 print(f"HPS scores: {hp_scores}")
-                print(f"Round diversity: {round_diversity}")
+                print(f"In-batch similarity: {round_diversity}")
                 print(f"Pos. similarities: {pos_sims}")
                 print(f"Neg. similarities: {neg_sims}")
 

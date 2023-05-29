@@ -8,6 +8,14 @@ n_images: 4
 n_rounds: 3
 num_prompts: 1000
 denoising_steps: 20
+guidance_scale: 6
+prompt_dropout: 0.3
+feedback:
+    start: 0.0
+    end: 0.66
+    min_weight: 0.1
+    max_weight: 0.8
+    neg_scale: 0.5
 seed: null
 liked_images:
     # - static/textual_inversion/example_01.png
@@ -20,5 +28,5 @@ disliked_images:
     # - static/generated/example_02.png
     # - static/generated/example_03.png
     # - static/textual_inversion/example_03.png
-images_prompts_dir: /data/efedele/stable-preferences/images_prompts
-output_path: /data/efedele/stable-preferences
+images_prompts_dir: static/target_curated_dataset/images_prompts
+output_path: outputs/target_curated_dataset

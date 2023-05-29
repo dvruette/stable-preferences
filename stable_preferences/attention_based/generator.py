@@ -342,8 +342,8 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
     @torch.no_grad()
     def generate(
         self,
-        prompt: str = "a photo of an astronaut riding a horse on mars",
-        negative_prompt: str = "",
+        prompt: Union[str, List[str]] = "a photo of an astronaut riding a horse on mars",
+        negative_prompt: Union[str, List[str]] = "",
         liked: List[Union[str, Image.Image]] = [],
         disliked: List[Union[str, Image.Image]] = [],
         seed: int = 42,
@@ -398,13 +398,21 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
         else:
             neg_latents = torch.tensor([], device=self.device, dtype=self.dtype)
 
+        if isinstance(prompt, str):
+            prompt = [prompt] * n_images
+        else:
+            assert len(prompt) == n_images
+        if isinstance(negative_prompt, str):
+            negative_prompt = [negative_prompt] * n_images
+        else:
+            assert len(negative_prompt) == n_images
+
         (
-            cond_prompt_embd,
-            uncond_prompt_embd,
-            null_prompt_embd,
-        ) = self.initialize_prompts([prompt, negative_prompt, ""]).split(1)
-        batched_prompt_embd = torch.cat([cond_prompt_embd, uncond_prompt_embd], dim=0)
-        batched_prompt_embd = batched_prompt_embd.repeat_interleave(n_images, dim=0)
+            cond_prompt_embs,
+            uncond_prompt_embs,
+            null_prompt_emb,
+        ) = self.initialize_prompts(prompt + negative_prompt + [""]).split([n_images, n_images, 1])
+        batched_prompt_embd = torch.cat([cond_prompt_embs, uncond_prompt_embs], dim=0)
 
         self.scheduler.set_timesteps(denoising_steps, device=self.device)
         timesteps = self.scheduler.timesteps
@@ -446,12 +454,13 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                         )
                     else:
                         z_ref_noised = self.scheduler.add_noise(z_ref, noise, t)
-                    # ref_prompt_embd = torch.cat([cond_prompt_embd] * pos_latents.size(0) + [null_prompt_embd] * neg_latents.size(0), dim=0)
-                    ref_prompt_embd = torch.cat(
-                        [cond_prompt_embd]
-                        * (pos_latents.size(0) + neg_latents.size(0)),
-                        dim=0,
-                    )
+                    # ref_prompt_embd = torch.cat([cond_prompt_embs[:1]] * pos_latents.size(0) + [null_prompt_emb] * neg_latents.size(0), dim=0)
+                    # ref_prompt_embd = torch.cat(
+                    #     [cond_prompt_embs[:1]]
+                    #     * (pos_latents.size(0) + neg_latents.size(0)),
+                    #     dim=0,
+                    # )
+                    ref_prompt_embd = torch.cat([null_prompt_emb] * (pos_latents.size(0) + neg_latents.size(0)), dim=0)
 
                     cached_hidden_states = self.get_unet_hidden_states(
                         z_ref_noised, t, ref_prompt_embd
