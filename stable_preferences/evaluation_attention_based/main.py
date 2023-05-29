@@ -17,9 +17,12 @@ from stable_preferences.attention_based.generator import (
 from stable_preferences.utils import get_free_gpu
 from stable_preferences.human_preference_dataset.prompts import sample_prompts
 
-from stable_preferences.evaluation.automatic_eval.image_similarity import ImageSimilarity
+from stable_preferences.evaluation.automatic_eval.image_similarity import (
+    ImageSimilarity,
+)
 from stable_preferences.evaluation.automatic_eval.image_diversity import ImageDiversity
 from stable_preferences.evaluation.automatic_eval.hps import HumanPreferenceScore
+
 
 def tile_images(images):
     size = images[0].size
@@ -54,7 +57,7 @@ def main(ctx: DictConfig):
     # device ="cuda:2"
     print(f"Using device: {device}")
 
-    # set global torch seed
+    # set global torch seed
     torch.manual_seed(ctx.global_seed)
     np.random.seed(ctx.global_seed)
 
@@ -82,7 +85,9 @@ def main(ctx: DictConfig):
         )
 
         if "hps_lora" in ctx.lora_weights and "Weird image. " not in negative_prompt:
-            print("Using HPS LoRA but 'Weird image. ' was not in negative prompt. Adding it.")
+            print(
+                "Using HPS LoRA but 'Weird image. ' was not in negative prompt. Adding it."
+            )
             negative_prompt = "Weird image. " + negative_prompt
 
     date_str = date.today().strftime("%Y-%m-%d")
@@ -104,7 +109,7 @@ def main(ctx: DictConfig):
     )
     img_similarity_model = ImageSimilarity(device=device)
     img_diversity_model = ImageDiversity(device=device)
-    
+
     init_liked = list(ctx.liked_images) if ctx.liked_images else []
     init_disliked = list(ctx.disliked_images) if ctx.disliked_images else []
     init_liked = [Image.open(img_path) for img_path in init_liked]
@@ -132,6 +137,11 @@ def main(ctx: DictConfig):
                     seed=seed,
                     n_images=ctx.n_images,
                     denoising_steps=ctx.denoising_steps,
+                    feedback_start=ctx.feedback.start,
+                    feedback_end=ctx.feedback.end,
+                    min_weight=ctx.feedback.min_weight,
+                    max_weight=ctx.feedback.max_weight,
+                    neg_scale=ctx.feedback.neg_scale,
                 )
                 imgs = trajectory[-1]
 
@@ -148,7 +158,7 @@ def main(ctx: DictConfig):
                     neg_sims = np.mean(neg_sims, axis=1)
                 else:
                     neg_sims = [None] * len(imgs)
-                    
+
                 round_diversity = img_diversity_model.compute(imgs)
 
                 out_paths = []
@@ -163,19 +173,21 @@ def main(ctx: DictConfig):
                     img.save(out_path)
                     print(f"Saved image to {out_path}")
 
-                    metrics.append({
-                        "round": i,
-                        "prompt": prompt,
-                        "prompt_idx": prompt_idx,
-                        "image_idx": j,
-                        "image": out_path,
-                        "hps": hps,
-                        "pos_sim": pos_sim,
-                        "neg_sim": neg_sim,
-                        "seed": ctx.seed,
-                        "liked": liked,
-                        "disliked": disliked,
-                    })
+                    metrics.append(
+                        {
+                            "round": i,
+                            "prompt": prompt,
+                            "prompt_idx": prompt_idx,
+                            "image_idx": j,
+                            "image": out_path,
+                            "hps": hps,
+                            "pos_sim": pos_sim,
+                            "neg_sim": neg_sim,
+                            "seed": ctx.seed,
+                            "liked": liked,
+                            "disliked": disliked,
+                        }
+                    )
                 if len(imgs) > 1:
                     tiled = tile_images(imgs)
                     tiled_path = os.path.join(
