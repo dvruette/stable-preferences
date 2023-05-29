@@ -58,6 +58,7 @@ def main(ctx: DictConfig):
         disliked=list(ctx.disliked_images) if ctx.disliked_images else [],
         seed=ctx.seed,
         n_images=ctx.n_images,
+        guidance_scale=ctx.guidance_scale,
         denoising_steps=ctx.denoising_steps,
         feedback_start=ctx.feedback.start,
         feedback_end=ctx.feedback.end,
