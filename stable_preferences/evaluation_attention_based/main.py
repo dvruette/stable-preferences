@@ -21,7 +21,6 @@ from stable_preferences.evaluation.automatic_eval.image_similarity import ImageS
 from stable_preferences.evaluation.automatic_eval.image_diversity import ImageDiversity
 from stable_preferences.evaluation.automatic_eval.hps import HumanPreferenceScore
 
-
 def tile_images(images):
     size = images[0].size
     assert all(img.size == size for img in images), "All images must have the same size"
@@ -54,6 +53,10 @@ def main(ctx: DictConfig):
     device = get_free_gpu() if torch.cuda.is_available() else device
     # device ="cuda:2"
     print(f"Using device: {device}")
+
+    # set global torch seed
+    torch.manual_seed(ctx.global_seed)
+    np.random.seed(ctx.global_seed)
 
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
     print(f"Using dtype: {dtype}")

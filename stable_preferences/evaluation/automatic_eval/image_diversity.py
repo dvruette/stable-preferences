@@ -1,12 +1,13 @@
 import torch
 import numpy as np
-import clip
+import open_clip
 
 
 class ImageDiversity:
     def __init__(
         self,
-        clip_model: str = "ViT-B/32",
+        clip_model: str = "ViT-bigG-14", #"ViT-B/32",
+        open_clip_dataset: str = "laion2b_s39b_b160k",
         device: str = None,
     ):
         if not device:
@@ -16,7 +17,8 @@ class ImageDiversity:
             self.device = "cuda" if torch.cuda.is_available() else self.device
         else:
             self.device = device
-        self.model, self.preprocess = clip.load(clip_model, device=self.device)
+        # self.model, self.preprocess = clip.load(clip_model, device=self.device)
+        self.model, _, self.preprocess = open_clip.create_model_and_transforms(clip_model, pretrained=open_clip_dataset, device=self.device)
 
     @torch.no_grad()
     def compute(self, imgs):
