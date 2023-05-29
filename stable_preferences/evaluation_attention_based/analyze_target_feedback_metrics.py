@@ -23,12 +23,12 @@ def plot_score_progression(groups, score_key="hps", round_key="round", **kwargs)
 
 
 def plot_max_progression(df1, df2, label1, label2, score_key="target_img_sim"):
-    max_sim1_0 = df1.loc[df1["round"] <= 0].groupby("prompt_idx")[target_key].max().mean()
-    max_sim1_1 = df1.loc[df1["round"] <= 1].groupby("prompt_idx")[target_key].max().mean()
-    max_sim1_2 = df1.loc[df1["round"] <= 2].groupby("prompt_idx")[target_key].max().mean()
-    max_sim2_0 = df2.loc[df2["round"] <= 0].groupby("prompt_idx")[target_key].max().mean()
-    max_sim2_1 = df2.loc[df2["round"] <= 1].groupby("prompt_idx")[target_key].max().mean()
-    max_sim2_2 = df2.loc[df2["round"] <= 2].groupby("prompt_idx")[target_key].max().mean()
+    max_sim1_0 = df1.loc[df1["round"] <= 0].groupby("prompt_idx")[score_key].max().mean()
+    max_sim1_1 = df1.loc[df1["round"] <= 1].groupby("prompt_idx")[score_key].max().mean()
+    max_sim1_2 = df1.loc[df1["round"] <= 2].groupby("prompt_idx")[score_key].max().mean()
+    max_sim2_0 = df2.loc[df2["round"] <= 0].groupby("prompt_idx")[score_key].max().mean()
+    max_sim2_1 = df2.loc[df2["round"] <= 1].groupby("prompt_idx")[score_key].max().mean()
+    max_sim2_2 = df2.loc[df2["round"] <= 2].groupby("prompt_idx")[score_key].max().mean()
 
     ts = [1, 2, 3]
     plt.plot(ts, [max_sim1_0, max_sim1_1, max_sim1_2], label=label1, linestyle="--", color="C0")
