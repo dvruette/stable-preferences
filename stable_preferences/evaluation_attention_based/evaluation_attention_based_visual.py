@@ -48,7 +48,7 @@ def get_prompts(path_to_dir):
     num_prompts = len(glob.glob(os.path.join(path_to_dir, "*.txt")))
     prompts = []
     for i in range(num_prompts):
-        with open(f"{i+1}.txt", "r") as f:
+        with open(os.path.join(path_to_dir, f"{i+1}.txt"), "r") as f:
             prompt = f.read()
         prompts.append(prompt)
     return prompts
@@ -57,7 +57,7 @@ def get_images(path_to_dir):
     num_images = len(glob.glob(os.path.join(path_to_dir, "*.jpg")))
     images = []
     for i in range(num_images):
-        image = Image.open(f"{i+1}.jpg")
+        image = Image.open(os.path.join(path_to_dir, f"{i+1}.jpg"))
         images.append(image)
     return images
 
