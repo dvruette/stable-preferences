@@ -26,7 +26,7 @@ def confidence_interval(data, groupby=None, confidence=0.95):
         return np.array(lower), np.array(upper)
 
 
-def plot_score_progression(groups, score_key="hps", round_key="round", confidence=0.95):
+def plot_score_progression(groups, score_key="hps", round_key="round", confidence=0.95, add_confidence_interval=True):
     max_hps_per_round = groups[score_key].max()
     min_hps_per_round = groups[score_key].min()
     avg_hps_per_round = groups[score_key].mean()
@@ -35,18 +35,23 @@ def plot_score_progression(groups, score_key="hps", round_key="round", confidenc
     mean_avg_hps_per_round = avg_hps_per_round.groupby(round_key).mean()
     
     ts = np.arange(len(mean_max_hps_per_round)) + 1
-    ci_max = confidence_interval(max_hps_per_round, groupby=round_key, confidence=confidence)
-    ci_min = confidence_interval(min_hps_per_round, groupby=round_key, confidence=confidence)
-    ci_mean = confidence_interval(avg_hps_per_round, groupby=round_key, confidence=confidence)
-    plt.errorbar(ts, mean_max_hps_per_round, yerr=(ci_max[1] - ci_max[0])/2, capsize=4, label="max")
-    plt.errorbar(ts, mean_min_hps_per_round, yerr=(ci_min[1] - ci_min[0])/2, capsize=4, label="min")
-    plt.errorbar(ts, mean_avg_hps_per_round, yerr=(ci_mean[1] - ci_mean[0])/2, capsize=4, label="mean")
+    if add_confidence_interval:
+        ci_max = confidence_interval(max_hps_per_round, groupby=round_key, confidence=confidence)
+        ci_min = confidence_interval(min_hps_per_round, groupby=round_key, confidence=confidence)
+        ci_mean = confidence_interval(avg_hps_per_round, groupby=round_key, confidence=confidence)
+        plt.errorbar(ts, mean_max_hps_per_round, yerr=(ci_max[1] - ci_max[0])/2, capsize=4, label="max")
+        plt.errorbar(ts, mean_min_hps_per_round, yerr=(ci_min[1] - ci_min[0])/2, capsize=4, label="min")
+        plt.errorbar(ts, mean_avg_hps_per_round, yerr=(ci_mean[1] - ci_mean[0])/2, capsize=4, label="mean")
+    else:
+        plt.plot(ts, mean_max_hps_per_round, label="max")
+        plt.plot(ts, mean_min_hps_per_round, label="min")
+        plt.plot(ts, mean_avg_hps_per_round, label="mean")
     plt.xticks(ts)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', type=str, default="outputs/rounds/2023-05-25/experiment_30")
+    parser.add_argument('--path', type=str, default="outputs/target_curated_dataset/outputs/rounds/2023-05-29/experiment_13")
     parser.add_argument('--metrics', type=str, default="metrics.csv")
     return parser.parse_args()
 
@@ -91,6 +96,21 @@ def main(args):
     plt.savefig(out_path, dpi=300)
     print(f"Saved plot to {out_path}")
 
+    if "target_img_sim" in df.columns:
+        plt.figure()
+        plot_score_progression(
+            df.groupby(["prompt_idx", "round"]),
+            score_key="target_img_sim",
+            add_confidence_interval=False,
+        )
+        plt.xlabel("Round")
+        plt.ylabel("CLIP Similarity")
+        plt.legend()
+
+        out_path = os.path.join(args.path, "target_sim_per_round.png")
+        plt.savefig(out_path, dpi=300)
+        print(f"Saved plot to {out_path}")
+
     plt.figure()
     max_hps_round0 = df.loc[df["round"] == 0].groupby("prompt_idx")["hps"].max()
     max_hps_round1 = df.loc[df["round"] == 1].groupby("prompt_idx")["hps"].max()
@@ -110,7 +130,7 @@ def main(args):
     hps_std_round0 = df.loc[df["round"] == 0].groupby("prompt_idx")["hps"].std().mean()
     mean_hps_round1 = df.loc[df["round"] == 1].groupby("prompt_idx")["hps"].mean()
     mean_hps_round2 = df.loc[df["round"] == 2].groupby("prompt_idx")["hps"].mean()
-    hps_std_round0.hist(bins=20, density=True, alpha=0.5, label="round 0")
+    # hps_std_round0.hist(bins=20, density=True, alpha=0.5, label="round 0")
     (mean_hps_round1 - mean_hps_round0).hist(bins=20, alpha=0.5, density=True, label="round 1 - round 0")
     (mean_hps_round2 - mean_hps_round1).hist(bins=20, alpha=0.5, density=True, label="round 2 - round 1")
     plt.xlabel("Change in HPS")
