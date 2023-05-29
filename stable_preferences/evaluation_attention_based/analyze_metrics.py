@@ -90,9 +90,37 @@ def main(args):
     out_path = os.path.join(args.path, "clip_sim_per_round.png")
     plt.savefig(out_path, dpi=300)
     print(f"Saved plot to {out_path}")
+
+    plt.figure()
+    max_hps_round0 = df.loc[df["round"] == 0].groupby("prompt_idx")["hps"].max()
+    max_hps_round1 = df.loc[df["round"] == 1].groupby("prompt_idx")["hps"].max()
+    max_hps_round2 = df.loc[df["round"] == 2].groupby("prompt_idx")["hps"].max()
+    (max_hps_round1 - max_hps_round0).hist(bins=20, alpha=0.5, density=True, label="round 1 - round 0")
+    (max_hps_round2 - max_hps_round1).hist(bins=20, alpha=0.5, density=True, label="round 2 - round 1")
+    plt.xlabel("Change in HPS")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.title("Change in max. HPS per round")
+    out_path = os.path.join(args.path, "max_hps_change.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved plot to {out_path}")
+
+    plt.figure()
+    mean_hps_round0 = df.loc[df["round"] == 0].groupby("prompt_idx")["hps"].mean()
+    hps_std_round0 = df.loc[df["round"] == 0].groupby("prompt_idx")["hps"].std().mean()
+    mean_hps_round1 = df.loc[df["round"] == 1].groupby("prompt_idx")["hps"].mean()
+    mean_hps_round2 = df.loc[df["round"] == 2].groupby("prompt_idx")["hps"].mean()
+    hps_std_round0.hist(bins=20, density=True, alpha=0.5, label="round 0")
+    (mean_hps_round1 - mean_hps_round0).hist(bins=20, alpha=0.5, density=True, label="round 1 - round 0")
+    (mean_hps_round2 - mean_hps_round1).hist(bins=20, alpha=0.5, density=True, label="round 2 - round 1")
+    plt.xlabel("Change in HPS")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.title("Change in mean HPS per round")
+    out_path = os.path.join(args.path, "mean_hps_change.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved plot to {out_path}")
     print()
-
-
 
 
 if __name__ == "__main__":
