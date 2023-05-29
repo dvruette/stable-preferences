@@ -1,0 +1,7 @@
+name: diffusion
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+prefix: /nese/mit/group/evlab/u/luwo/anaconda/envs/diffusion
