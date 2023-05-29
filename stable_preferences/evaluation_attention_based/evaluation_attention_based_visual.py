@@ -45,19 +45,19 @@ def word_dropout(x, p=0.5):
     return " ".join(words)
 
 def get_prompts(path_to_dir):
-    prompt_paths = sorted(glob.glob(os.path.join(path_to_dir, "*.txt")))
+    num_prompts = len(glob.glob(os.path.join(path_to_dir, "*.txt")))
     prompts = []
-    for prompt_path in prompt_paths:
-        with open(prompt_path, "r") as f:
+    for i in range(num_prompts):
+        with open(f"{i+1}.txt", "r") as f:
             prompt = f.read()
         prompts.append(prompt)
     return prompts
 
 def get_images(path_to_dir):
-    image_paths = sorted(glob.glob(os.path.join(path_to_dir, "*.jpg")))
+    num_images = len(glob.glob(os.path.join(path_to_dir, "*.jpg")))
     images = []
-    for image_path in image_paths:
-        image = Image.open(image_path)
+    for i in range(num_images):
+        image = Image.open(f"{i+1}.jpg")
         images.append(image)
     return images
 
