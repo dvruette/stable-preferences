@@ -18,6 +18,7 @@ n_rounds: 3
 num_prompts: 1000
 denoising_steps: 20
 seed: null
+global_seed: 42
 liked_images:
     # - static/textual_inversion/example_01.png
     # - static/textual_inversion/pink_lights/333573395_746205383847858_1035458537927676333_n.jpg
