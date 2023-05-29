@@ -446,7 +446,7 @@ class StableDiffuserWithAttentionFeedback(nn.Module):
                 pos_ws = (weight, weight * pos_bottleneck_scale)
                 neg_ws = (weight * neg_scale, weight * neg_scale * neg_bottleneck_scale)
 
-                if z_ref.size(0) > 0:
+                if z_ref.size(0) > 0 and weight > 0:
                     noise = torch.randn_like(z_ref)
                     if isinstance(self.scheduler, EulerAncestralDiscreteScheduler):
                         z_ref_noised = (
