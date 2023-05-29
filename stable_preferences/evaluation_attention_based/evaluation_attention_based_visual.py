@@ -63,6 +63,8 @@ def get_images(path_to_dir):
 
 @hydra.main(config_path="../configs", config_name="evaluation_attention_based_visual", version_base=None)
 def main(ctx: DictConfig):
+    np.random.seed(ctx.global_seed)
+    torch.manual_seed(ctx.global_seed)
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     device = "cpu"
