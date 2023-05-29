@@ -6,18 +6,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def plot_score_progression(groups, score_key="hps", round_key="round", **kwargs):
-    max_hps_per_round = groups[score_key].max()
-    min_hps_per_round = groups[score_key].min()
-    avg_hps_per_round = groups[score_key].mean()
-    mean_max_hps_per_round = max_hps_per_round.groupby(round_key).mean()
-    mean_min_hps_per_round = min_hps_per_round.groupby(round_key).mean()
-    mean_avg_hps_per_round = avg_hps_per_round.groupby(round_key).mean()
+def plot_score_progression(df1, df2, label1, label2, score_key="target_img_sim"):
+    groups1 = df1.groupby(["prompt_idx", "round"])
+    groups2 = df2.groupby(["prompt_idx", "round"])
+    max_per_round1 = groups1[score_key].max().groupby("round").mean()
+    min_per_round1 = groups1[score_key].min().groupby("round").mean()
+    mean_per_round1 = groups1[score_key].mean().groupby("round").mean()
+    max_per_round2 = groups2[score_key].max().groupby("round").mean()
+    min_per_round2 = groups2[score_key].min().groupby("round").mean()
+    mean_per_round2 = groups2[score_key].mean().groupby("round").mean()
     
-    ts = np.arange(len(mean_max_hps_per_round)) + 1
-    plt.plot(ts, mean_max_hps_per_round, label="max", **kwargs)
-    plt.plot(ts, mean_min_hps_per_round, label="min", **kwargs)
-    plt.plot(ts, mean_avg_hps_per_round, label="mean", **kwargs)
+    ts = [1, 2, 3]
+    plt.plot(ts, max_per_round1, label=f"{label1} (max)", linestyle="--")
+    plt.plot(ts, min_per_round1, label=f"{label1} (min)", linestyle="--")
+    plt.plot(ts, mean_per_round1, label=f"{label1} (mean)", linestyle="--")
+    plt.plot(ts, max_per_round2, label=f"{label2} (max)", color="C0")
+    plt.plot(ts, min_per_round2, label=f"{label2} (min)", color="C1")
+    plt.plot(ts, mean_per_round2, label=f"{label2} (mean)", color="C2")
     plt.xticks(ts)
     plt.legend()
 
@@ -91,31 +96,15 @@ def main(args):
     os.makedirs(args.output_path, exist_ok=True)
 
     plt.figure()
-    plot_score_progression(
-        df1.groupby(["prompt_idx", "round"]),
-        score_key="target_img_sim",
-    )
+    plot_score_progression(df1, df2, args.label1, args.label2)
     plt.xlabel("Round")
     plt.ylabel("CLIP similarity")
     plt.title("CLIP similarity progression per round")
 
-    out_path = os.path.join(args.output_path, f"target_sim_per_round_{args.label1}.png")
+    out_path = os.path.join(args.output_path, f"target_sim_per_round.png")
     plt.savefig(out_path, dpi=300)
     print(f"Saved plot to {out_path}")
 
-
-    plt.figure()
-    plot_score_progression(
-        df2.groupby(["prompt_idx", "round"]),
-        score_key="target_img_sim",
-    )
-    plt.xlabel("Round")
-    plt.ylabel("CLIP similarity")
-    plt.title("CLIP similarity progression per round")
-
-    out_path = os.path.join(args.output_path, f"target_sim_per_round_{args.label2}.png")
-    plt.savefig(out_path, dpi=300)
-    print(f"Saved plot to {out_path}")
 
     plt.figure()
     plot_max_progression(df1, df2, args.label1, args.label2)
