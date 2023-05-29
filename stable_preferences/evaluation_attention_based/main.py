@@ -66,12 +66,21 @@ def main(ctx: DictConfig):
     ).to(device)
     # generator.pipeline.enable_xformers_memory_efficient_attention()
 
+    if hasattr(ctx, "negative_prompt"):
+        negative_prompt = ctx.negative_prompt
+    else:
+        negative_prompt = ""
+
     # After the pipeline was generated inside the generator, apply LoRA if specified
     if ctx.lora_weights:
         print(f"Applying LoRA weights from {ctx.lora_weights}")
         apply_unet_lora_weights(
             pipeline=generator.pipeline, unet_path=ctx.lora_weights, device=device
         )
+
+        if "hps_lora" in ctx.lora_weights and "Weird image. " not in negative_prompt:
+            print("Using HPS LoRA but 'Weird image. ' was not in negative prompt. Adding it.")
+            negative_prompt = "Weird image. " + negative_prompt
 
     date_str = date.today().strftime("%Y-%m-%d")
     out_folder = os.path.join("outputs", "rounds", date_str)
@@ -114,7 +123,7 @@ def main(ctx: DictConfig):
             for i in range(ctx.n_rounds):
                 trajectory = generator.generate(
                     prompt=prompt,
-                    negative_prompt=ctx.negative_prompt,
+                    negative_prompt=negative_prompt,
                     liked=liked,
                     disliked=disliked,
                     seed=seed,
