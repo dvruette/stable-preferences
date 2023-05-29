@@ -19,63 +19,30 @@ def plot_score_progression(groups, score_key="hps", round_key="round", **kwargs)
     plt.plot(ts, mean_min_hps_per_round, label="min", **kwargs)
     plt.plot(ts, mean_avg_hps_per_round, label="mean", **kwargs)
     plt.xticks(ts)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--baseline_path', type=str, default="~/Downloads/prompt_dropout3")
-    parser.add_argument('--ours_path', type=str, default="~/Downloads/prompt_dropout0")
-    parser.add_argument('--output_path', type=str, default="outputs/plots")
-    parser.add_argument('--metrics', type=str, default="metrics.csv")
-    return parser.parse_args()
-
-def main(args):
-    df_baseline = pd.read_csv(os.path.join(args.baseline_path, "metrics.csv"))
-    df_ours = pd.read_csv(os.path.join(args.ours_path, "metrics.csv"))
-    
-    os.makedirs(args.output_path, exist_ok=True)
-
-    plt.figure()
-    plot_score_progression(
-        df_ours.groupby(["prompt_idx", "round"]),
-        score_key="target_img_sim",
-    )
-    plt.xlabel("Round")
-    plt.ylabel("CLIP similarity")
-    plt.title("CLIP similarity progression per round")
     plt.legend()
 
-    out_path = os.path.join(args.output_path, "target_sim_per_round.png")
-    plt.savefig(out_path, dpi=300)
-    print(f"Saved plot to {out_path}")
 
-    base_max_sim_0 = df_baseline.loc[df_baseline["round"] <= 0].groupby("prompt_idx")["target_img_sim"].max().mean()
-    base_max_sim_1 = df_baseline.loc[df_baseline["round"] <= 1].groupby("prompt_idx")["target_img_sim"].max().mean()
-    base_max_sim_2 = df_baseline.loc[df_baseline["round"] <= 2].groupby("prompt_idx")["target_img_sim"].max().mean()
-    ours_max_sim_0 = df_ours.loc[df_ours["round"] <= 0].groupby("prompt_idx")["target_img_sim"].max().mean()
-    ours_max_sim_1 = df_ours.loc[df_ours["round"] <= 1].groupby("prompt_idx")["target_img_sim"].max().mean()
-    ours_max_sim_2 = df_ours.loc[df_ours["round"] <= 2].groupby("prompt_idx")["target_img_sim"].max().mean()
+def plot_max_progression(df1, df2, label1, label2, score_key="target_img_sim"):
+    max_sim1_0 = df1.loc[df1["round"] <= 0].groupby("prompt_idx")[target_key].max().mean()
+    max_sim1_1 = df1.loc[df1["round"] <= 1].groupby("prompt_idx")[target_key].max().mean()
+    max_sim1_2 = df1.loc[df1["round"] <= 2].groupby("prompt_idx")[target_key].max().mean()
+    max_sim2_0 = df2.loc[df2["round"] <= 0].groupby("prompt_idx")[target_key].max().mean()
+    max_sim2_1 = df2.loc[df2["round"] <= 1].groupby("prompt_idx")[target_key].max().mean()
+    max_sim2_2 = df2.loc[df2["round"] <= 2].groupby("prompt_idx")[target_key].max().mean()
 
-    plt.figure()
     ts = [1, 2, 3]
-    plt.plot(ts, [base_max_sim_0, base_max_sim_1, base_max_sim_2], label="baseline", linestyle="--", color="blue")
-    plt.plot(ts, [ours_max_sim_0, ours_max_sim_1, ours_max_sim_2], label="ours", color="blue")
+    plt.plot(ts, [max_sim1_0, max_sim1_1, max_sim1_2], label=label1, linestyle="--", color="C0")
+    plt.plot(ts, [max_sim2_0, max_sim2_1, max_sim2_2], label=label2, color="C0")
     plt.xticks(ts)
-    plt.xlabel("Round")
-    plt.ylabel("CLIP similarity")
-    plt.title("Max CLIP similarity over all rounds")
     plt.legend()
 
-    out_path = os.path.join(args.output_path, "global_max_target_sim.png")
-    plt.savefig(out_path, dpi=300)
-    print(f"Saved plot to {out_path}")
 
-    pos_sim_1 = df_ours.loc[df_ours["round"] == 1]["pos_sim"].mean()
-    neg_sim_1 = df_ours.loc[df_ours["round"] == 1]["neg_sim"].mean()
-    pos_sim_2 = df_ours.loc[df_ours["round"] == 2]["pos_sim"].mean()
-    neg_sim_2 = df_ours.loc[df_ours["round"] == 2]["neg_sim"].mean()
+def feedback_similarity_bar_plot(df):
+    pos_sim_1 = df.loc[df["round"] == 1]["pos_sim"].mean()
+    neg_sim_1 = df.loc[df["round"] == 1]["neg_sim"].mean()
+    pos_sim_2 = df.loc[df["round"] == 2]["pos_sim"].mean()
+    neg_sim_2 = df.loc[df["round"] == 2]["neg_sim"].mean()
 
-    plt.figure()
     ts = np.array([1, 2])  # Use numpy array for arithmetic operations
     width = 0.35  # Width of the bars
     padding = 0.025
@@ -86,13 +53,95 @@ def main(args):
     plt.bar(ts_pos, [pos_sim_1, pos_sim_2], width=width, label="positive")
     plt.bar(ts_neg, [neg_sim_1, neg_sim_2], width=width, label="negative")
     plt.xticks(ts)
-    plt.ylim(75, None)
+    plt.ylim(50, None)
     plt.xlabel("Round")
     plt.ylabel("CLIP similarity")
     plt.legend()
     plt.title("CLIP similarity to feedback images")
 
-    out_path = os.path.join(args.output_path, "feedback_sim.png")
+
+def plot_diversity_progression(df1, df2, label1, label2):
+    diversity_baseline = 100 - df1.groupby(["round", "prompt_idx"])["round_diversity"].mean().groupby("round").mean()
+    diversity_ours = 100 - df2.groupby(["round", "prompt_idx"])["round_diversity"].mean().groupby("round").mean()
+
+    ts = [1, 2, 3]
+    plt.plot(ts, diversity_baseline, label=label1, linestyle="--", color="C0")
+    plt.plot(ts, diversity_ours, label=label2, color="C0")
+    plt.xticks(ts)
+    plt.xlabel("Round")
+    plt.ylabel("In-batch diversity")
+    plt.title("In-batch image diversity per round")
+    plt.legend()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input_path1', type=str, default="~/Downloads/prompt_dropout3/metrics.csv")
+    parser.add_argument('--input_path2', type=str, default="~/Downloads/prompt_dropout0/metrics.csv")
+    parser.add_argument('--label1', type=str, default='dropout=0.3')
+    parser.add_argument('--label2', type=str, default='dropout=0.0')
+    parser.add_argument('--output_path', type=str, default="outputs/plots")
+    return parser.parse_args()
+
+
+def main(args):
+    df1 = pd.read_csv(os.path.join(args.input_path1))
+    df2 = pd.read_csv(os.path.join(args.input_path2))
+    
+    os.makedirs(args.output_path, exist_ok=True)
+
+    plt.figure()
+    plot_score_progression(
+        df1.groupby(["prompt_idx", "round"]),
+        score_key="target_img_sim",
+    )
+    plt.xlabel("Round")
+    plt.ylabel("CLIP similarity")
+    plt.title("CLIP similarity progression per round")
+
+    out_path = os.path.join(args.output_path, f"target_sim_per_round_{args.label1}.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved plot to {out_path}")
+
+
+    plt.figure()
+    plot_score_progression(
+        df2.groupby(["prompt_idx", "round"]),
+        score_key="target_img_sim",
+    )
+    plt.xlabel("Round")
+    plt.ylabel("CLIP similarity")
+    plt.title("CLIP similarity progression per round")
+
+    out_path = os.path.join(args.output_path, f"target_sim_per_round_{args.label2}.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved plot to {out_path}")
+
+    plt.figure()
+    plot_max_progression(df1, df2, args.label1, args.label2)
+    plt.xlabel("Round")
+    plt.ylabel("CLIP similarity")
+    plt.title("Max CLIP similarity over all rounds")
+
+    out_path = os.path.join(args.output_path, "global_max_target_sim.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved plot to {out_path}")
+
+    plt.figure()
+    feedback_similarity_bar_plot(df1)
+    out_path = os.path.join(args.output_path, f"feedback_sim_{args.label1}.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved plot to {out_path}")
+
+    plt.figure()
+    feedback_similarity_bar_plot(df2)
+    out_path = os.path.join(args.output_path, f"feedback_sim_{args.label2}.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved plot to {out_path}")
+
+    plt.figure()
+    plot_diversity_progression(df1, df2, args.label1, args.label2)
+    out_path = os.path.join(args.output_path, "diversity.png")
     plt.savefig(out_path, dpi=300)
     print(f"Saved plot to {out_path}")
 
