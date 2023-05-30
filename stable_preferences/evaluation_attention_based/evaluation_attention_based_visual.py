@@ -121,15 +121,17 @@ def main(ctx: DictConfig):
             liked = init_liked.copy()
             disliked = init_disliked.copy()
 
-            if ctx.seed is None:
-                seed = torch.randint(0, 2 ** 32, (1,)).item()
-            else:
-                seed = ctx.seed
 
             for i in range(ctx.n_rounds):
+                if ctx.seed is None:
+                    seed = torch.randint(0, 2 ** 32, (1,)).item()
+                else:
+                    seed = ctx.seed
+
                 ps = [prompt] * ctx.n_images
                 if ctx.prompt_dropout > 0:
                     ps = [word_dropout(p, ctx.prompt_dropout) for p in ps]
+
                 trajectory = generator.generate(
                     prompt=ps,
                     negative_prompt=ctx.negative_prompt,

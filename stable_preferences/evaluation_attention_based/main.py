@@ -123,12 +123,12 @@ def main(ctx: DictConfig):
             liked = init_liked.copy()
             disliked = init_disliked.copy()
 
-            if ctx.seed is None:
-                seed = torch.randint(0, 2**32, (1,)).item()
-            else:
-                seed = ctx.seed
-
             for i in range(ctx.n_rounds):
+                if ctx.seed is None:
+                    seed = torch.randint(0, 2**32, (1,)).item()
+                else:
+                    seed = ctx.seed
+
                 trajectory = generator.generate(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
