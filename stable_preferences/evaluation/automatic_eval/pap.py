@@ -73,9 +73,6 @@ class PickAPicScore:
             text_embs = text_embs / torch.norm(text_embs, dim=-1, keepdim=True)
 
             # score
-            scores = self.model.logit_scale.exp() * (text_embs @ image_embs.T)[0]
+            scores = 100 * self.model.logit_scale.exp() * (text_embs @ image_embs.T)[0]
 
-            # get probabilities if you have multiple images to choose from
-            probs = torch.softmax(scores, dim=-1)
-
-        return probs.cpu().tolist()
+        return scores.cpu().tolist()
